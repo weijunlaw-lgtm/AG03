@@ -51,6 +51,10 @@ class ExecutionResult:
     mtm_equity: np.ndarray  # float64[:]
     open_contracts_series: np.ndarray  # int64[:]
 
+    # Intra-trade excursion analytics (MAE & MFE)
+    mae_pts: Optional[np.ndarray] = None
+    mfe_pts: Optional[np.ndarray] = None
+
 
 @njit
 def _ebp_numba_kernel(
@@ -90,6 +94,8 @@ def _ebp_numba_kernel(
     out_commission_usd = np.empty(max_trades, dtype=np.float64)
     out_exit_reason = np.empty(max_trades, dtype=np.int32)
     out_used_midpoint = np.empty(max_trades, dtype=np.int32)
+    out_mae_pts = np.empty(max_trades, dtype=np.float64)
+    out_mfe_pts = np.empty(max_trades, dtype=np.float64)
     n_trades = 0
 
     # Active trade slots buffer
@@ -102,6 +108,8 @@ def _ebp_numba_kernel(
     active_sl_dist = np.empty(max_slots, dtype=np.float64)
     active_contracts = np.empty(max_slots, dtype=np.int64)
     active_midpoint_rule = np.empty(max_slots, dtype=np.int32)
+    active_mae = np.zeros(max_slots, dtype=np.float64)
+    active_mfe = np.zeros(max_slots, dtype=np.float64)
     num_active = 0
     current_open_contracts = 0
 
@@ -153,6 +161,8 @@ def _ebp_numba_kernel(
                         active_sl_dist[slot] = sl_dist
                         active_contracts[slot] = contracts
                         active_midpoint_rule[slot] = 1 if is_midpoint_arr[sig_idx] else 0
+                        active_mae[slot] = 0.0
+                        active_mfe[slot] = 0.0
                         num_active += 1
                         current_open_contracts += contracts
 
@@ -182,6 +192,8 @@ def _ebp_numba_kernel(
                         active_sl_dist[slot] = sl_dist
                         active_contracts[slot] = contracts
                         active_midpoint_rule[slot] = 1 if is_midpoint_arr[sig_idx] else 0
+                        active_mae[slot] = 0.0
+                        active_mfe[slot] = 0.0
                         num_active += 1
                         current_open_contracts += contracts
 
@@ -208,6 +220,22 @@ def _ebp_numba_kernel(
             sl_d = active_sl_dist[slot_idx]
             cnts = active_contracts[slot_idx]
             mid_r = active_midpoint_rule[slot_idx]
+
+            # Track intra-trade excursion (MAE / MFE) on current bar i
+            if direction == 1:
+                fav = high_arr[i] - entry_p
+                adv = entry_p - low_arr[i]
+                if fav > active_mfe[slot_idx]:
+                    active_mfe[slot_idx] = fav
+                if adv > active_mae[slot_idx]:
+                    active_mae[slot_idx] = adv
+            else:
+                fav = entry_p - low_arr[i]
+                adv = high_arr[i] - entry_p
+                if fav > active_mfe[slot_idx]:
+                    active_mfe[slot_idx] = fav
+                if adv > active_mae[slot_idx]:
+                    active_mae[slot_idx] = adv
 
             exited = False
             exit_price = 0.0
@@ -273,6 +301,8 @@ def _ebp_numba_kernel(
                     out_commission_usd[n_trades] = comm_usd
                     out_exit_reason[n_trades] = exit_reason
                     out_used_midpoint[n_trades] = mid_r
+                    out_mae_pts[n_trades] = max(0.0, active_mae[slot_idx])
+                    out_mfe_pts[n_trades] = max(0.0, active_mfe[slot_idx])
                     n_trades += 1
 
                 # Release contracts and remove active slot (swap with last)
@@ -287,6 +317,8 @@ def _ebp_numba_kernel(
                     active_sl_dist[slot_idx] = active_sl_dist[last_idx]
                     active_contracts[slot_idx] = active_contracts[last_idx]
                     active_midpoint_rule[slot_idx] = active_midpoint_rule[last_idx]
+                    active_mae[slot_idx] = active_mae[last_idx]
+                    active_mfe[slot_idx] = active_mfe[last_idx]
                 num_active -= 1
             else:
                 slot_idx += 1
@@ -325,6 +357,8 @@ def _ebp_numba_kernel(
         out_commission_usd[:n_trades],
         out_exit_reason[:n_trades],
         out_used_midpoint[:n_trades],
+        out_mae_pts[:n_trades],
+        out_mfe_pts[:n_trades],
         skipped_by_contract_cap,
         peak_concurrent_contracts,
         peak_concurrent_slots,
@@ -362,6 +396,8 @@ def run_numba_execution(
         commission_usd,
         exit_reasons,
         used_midpoint,
+        mae_pts,
+        mfe_pts,
         skipped_cap,
         peak_contracts,
         peak_slots,
@@ -411,4 +447,6 @@ def run_numba_execution(
         equity_unrealized=eq_unreal,
         mtm_equity=mtm_eq,
         open_contracts_series=open_cnts,
+        mae_pts=mae_pts,
+        mfe_pts=mfe_pts,
     )

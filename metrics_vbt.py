@@ -77,6 +77,12 @@ def trades_to_dataframe(
     for i in range(n_trades):
         en_bar = exec_res.entry_bars[i]
         ex_bar = exec_res.exit_bars[i]
+        mae_p = round(float(exec_res.mae_pts[i]), 2) if exec_res.mae_pts is not None else 0.0
+        mfe_p = round(float(exec_res.mfe_pts[i]), 2) if exec_res.mfe_pts is not None else 0.0
+        sl_d = float(exec_res.sl_dists[i])
+        mae_r = round(mae_p / sl_d, 3) if sl_d > 0 else 0.0
+        mfe_r = round(mfe_p / sl_d, 3) if sl_d > 0 else 0.0
+
         records.append(
             {
                 "trade_id": i + 1,
@@ -95,6 +101,10 @@ def trades_to_dataframe(
                 "commission_usd": round(exec_res.commission_usd[i], 2),
                 "exit_reason": reason_map.get(exec_res.exit_reasons[i], "Unknown"),
                 "used_50pt_rule": bool(exec_res.used_midpoint_rule[i]),
+                "mae_pts": mae_p,
+                "mfe_pts": mfe_p,
+                "mae_r": mae_r,
+                "mfe_r": mfe_r,
             }
         )
 

@@ -114,6 +114,7 @@ def calculate_performance_metrics(
     if len(df) == 0:
         return {
             "total_trades": 0,
+            "active_days": 0,
             "total_net_profit": 0.0,
             "gross_profit": 0.0,
             "gross_loss": 0.0,
@@ -278,6 +279,7 @@ def calculate_performance_metrics(
 
     return {
         "total_trades": n_trades,
+        "active_days": active_days,
         "total_net_profit": round(total_net_profit, 2),
         "gross_profit": round(gross_profit, 2),
         "gross_loss": round(gross_loss, 2),

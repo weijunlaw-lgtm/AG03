@@ -11,7 +11,9 @@ from config import StrategyConfig
 
 
 def normalize_dataframe(
-    df: pd.DataFrame, timezone: str = "America/New_York"
+    df: pd.DataFrame,
+    timezone: str = "America/New_York",
+    mt5_shift_hours: Optional[int] = None,
 ) -> pd.DataFrame:
     """
     Validate, clean, and normalize OHLCV dataframe.
@@ -19,31 +21,34 @@ def normalize_dataframe(
     """
     df = df.copy()
 
-    # Column name mapping (case-insensitive)
+    # Column name mapping (case-insensitive and stripping angle brackets for MT5)
     col_map = {}
     date_col = None
     time_col = None
 
     for col in df.columns:
-        c_lower = str(col).strip().lower()
-        if c_lower in ("open", "o"):
+        c_clean = str(col).replace("<", "").replace(">", "").strip().lower()
+        if c_clean in ("open", "o"):
             col_map[col] = "Open"
-        elif c_lower in ("high", "h"):
+        elif c_clean in ("high", "h"):
             col_map[col] = "High"
-        elif c_lower in ("low", "l"):
+        elif c_clean in ("low", "l"):
             col_map[col] = "Low"
-        elif c_lower in ("close", "c"):
+        elif c_clean in ("close", "c"):
             col_map[col] = "Close"
-        elif c_lower in ("volume", "vol", "v"):
-            col_map[col] = "Volume"
-        elif c_lower in ("datetime", "timestamp", "dt"):
+        elif c_clean in ("volume", "vol", "v", "tickvol"):
+            if "Volume" not in col_map.values():
+                col_map[col] = "Volume"
+        elif c_clean in ("datetime", "timestamp", "dt"):
             date_col = col
-        elif c_lower == "date":
+        elif c_clean == "date":
             date_col = col
-        elif c_lower == "time":
+        elif c_clean == "time":
             time_col = col
 
     df = df.rename(columns=col_map)
+    # Deduplicate columns if any
+    df = df.loc[:, ~df.columns.duplicated()]
     required = ["Open", "High", "Low", "Close"]
     missing = [c for c in required if c not in df.columns]
     if missing:
@@ -55,7 +60,7 @@ def normalize_dataframe(
     # Ensure DatetimeIndex
     if not isinstance(df.index, pd.DatetimeIndex):
         if date_col is not None and time_col is not None and date_col in df.columns and time_col in df.columns:
-            # Combine Date and Time columns (e.g. '2024-01-08' and '09:30:00')
+            # Combine Date and Time columns (e.g. '2024-01-08' and '09:30:00' or '2020.01.02')
             df.index = pd.to_datetime(df[date_col].astype(str) + " " + df[time_col].astype(str))
             df = df.drop(columns=[date_col, time_col])
         elif date_col is not None and date_col in df.columns:
@@ -69,6 +74,10 @@ def normalize_dataframe(
                 df.index = pd.to_datetime(df.index)
             except Exception as e:
                 raise ValueError(f"Could not convert index to DatetimeIndex: {e}")
+
+    # Optional MT5 server time shift (e.g., -7 hours to convert Vantage MT5 to America/New_York)
+    if mt5_shift_hours is not None and mt5_shift_hours != 0:
+        df.index = df.index + pd.Timedelta(hours=mt5_shift_hours)
 
     # Timezone normalization to America/New_York across DST transitions
     if df.index.tz is None:
@@ -145,11 +154,15 @@ def compute_session_masks(
 
 
 def prepare_data(
-    df: pd.DataFrame, config: Optional[StrategyConfig] = None
+    df: pd.DataFrame,
+    config: Optional[StrategyConfig] = None,
+    mt5_shift_hours: Optional[int] = None,
 ) -> pd.DataFrame:
     """Normalize dataframe and attach session masks."""
     cfg = config or StrategyConfig()
-    df_clean = normalize_dataframe(df, timezone=cfg.timezone)
+    df_clean = normalize_dataframe(
+        df, timezone=cfg.timezone, mt5_shift_hours=mt5_shift_hours
+    )
     can_enter, force_flatten = compute_session_masks(
         df_clean.index,
         entry_cutoff_est=cfg.entry_cutoff_est,
@@ -170,11 +183,24 @@ def load_from_parquet(
 
 
 def load_from_csv(
-    file_path: str, config: Optional[StrategyConfig] = None
+    file_path: str,
+    config: Optional[StrategyConfig] = None,
+    mt5_shift_hours: Optional[int] = None,
 ) -> pd.DataFrame:
-    """Load 5m OHLCV data from CSV file."""
-    df = pd.read_csv(file_path)
-    return prepare_data(df, config)
+    """Load 5m OHLCV data from CSV or TSV file, auto-detecting delimiters and MT5 server time."""
+    try:
+        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+            first_line = f.readline()
+        sep = "\t" if "\t" in first_line else ","
+        df = pd.read_csv(file_path, sep=sep)
+    except Exception:
+        df = pd.read_csv(file_path, sep=None, engine="python")
+
+    # If file contains MT5 angle bracket headers, default shift to -7 hours (Vantage MT5 -> NY)
+    is_mt5 = any("<date>" in str(c).lower() or "<time>" in str(c).lower() for c in df.columns)
+    shift = mt5_shift_hours if mt5_shift_hours is not None else (-7 if is_mt5 else None)
+
+    return prepare_data(df, config, mt5_shift_hours=shift)
 
 
 def generate_synthetic_mnq_data(

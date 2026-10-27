@@ -467,16 +467,28 @@ class TestVectorBTAndLeaderboard(unittest.TestCase):
 
 
 class TestEdgeCasesAndRobustness(unittest.TestCase):
-    """Test empty data, single bar data, and zero trades scenarios."""
+    """Test empty data, single bar data, zero trades, DST transitions, and institutional risk edge cases."""
 
     def test_empty_dataframe(self):
-        """Empty dataframe must not crash and returns empty signals/results."""
+        """Empty dataframe must not crash across compute_signals, strat.run, and strat.grid_search."""
         empty_df = pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"])
         empty_df.index = pd.to_datetime([])
 
         strat = NQEBPStrategy()
         sigs = compute_signals(empty_df, strat.config)
         self.assertEqual(len(sigs.bull_ebp), 0)
+
+        # Full end-to-end run on empty dataframe
+        res = strat.run(empty_df)
+        self.assertEqual(res.metrics["total_trades"], 0)
+        self.assertEqual(res.metrics["total_net_profit"], 0.0)
+        self.assertEqual(res.metrics["max_intraday_drawdown"], 0.0)
+        self.assertIsNone(res.vbt_trades)
+        self.assertIn("MNQ EBP STRATEGY BACKTEST SUMMARY", res.summary())
+
+        # Grid search on empty dataframe
+        leaderboard = strat.grid_search(empty_df)
+        self.assertEqual(len(leaderboard), 30)
 
     def test_single_bar_dataframe(self):
         """Single bar dataframe cannot produce signals or trades."""
@@ -509,6 +521,152 @@ class TestEdgeCasesAndRobustness(unittest.TestCase):
         self.assertEqual(res.metrics["total_trades"], 0)
         self.assertEqual(res.metrics["profit_factor"], 0.0)
         self.assertEqual(res.metrics["overall_win_rate_pct"], 0.0)
+
+    def test_dst_transition_spring_and_fall(self):
+        """Verify normalize_dataframe smoothly normalizes spring-forward and fall-back DST transitions without crashing."""
+        # Spring forward (nonexistent hour 02:00 -> shifted forward)
+        spring_df = pd.DataFrame(
+            {"Open": [100.0], "High": [105.0], "Low": [95.0], "Close": [102.0]},
+            index=pd.date_range("2024-03-10 02:00:00", periods=1, freq="5min"),
+        )
+        norm_spring = normalize_dataframe(spring_df)
+        self.assertEqual(str(norm_spring.index.tz), "America/New_York")
+        self.assertEqual(len(norm_spring), 1)
+
+        # Fall back (ambiguous repeated hour 01:00)
+        fall_df = pd.DataFrame(
+            {"Open": [100.0], "High": [105.0], "Low": [95.0], "Close": [102.0]},
+            index=pd.date_range("2024-11-03 01:00:00", periods=1, freq="5min"),
+        )
+        norm_fall = normalize_dataframe(fall_df)
+        self.assertEqual(str(norm_fall.index.tz), "America/New_York")
+        self.assertEqual(len(norm_fall), 1)
+
+    def test_csv_loader_various_column_formats(self):
+        """Verify column normalization with combined Date + Time and capitalized Date columns."""
+        df_datetime = pd.DataFrame(
+            {
+                "Date": ["2024-01-08", "2024-01-08"],
+                "Time": ["09:30:00", "09:35:00"],
+                "OPEN": [100.0, 101.0],
+                "HIGH": [105.0, 106.0],
+                "LOW": [99.0, 100.0],
+                "CLOSE": [104.0, 105.0],
+            }
+        )
+        res = normalize_dataframe(df_datetime)
+        self.assertIsInstance(res.index, pd.DatetimeIndex)
+        self.assertEqual(res.index[0].hour, 9)
+        self.assertEqual(res.index[0].minute, 30)
+        self.assertNotIn("Date", res.columns)
+        self.assertNotIn("Time", res.columns)
+
+    def test_contract_cap_counter_when_contracts_less_than_one(self):
+        """
+        Spec Section 3.2 item 4: If Contracts < 1 OR (Current_Open_Contracts + Contracts) > 50:
+        Do NOT enter the trade. Increment skipped_by_contract_cap.
+        """
+        # Huge stop distance: 400 pts -> raw_contracts = 300 / (400 * 2) = 0.375 -> contracts = 0
+        open_arr = np.array([100.0, 100.0, 100.0])
+        high_arr = np.array([105.0, 105.0, 105.0])
+        low_arr = np.array([95.0, 95.0, 95.0])
+        close_arr = np.array([104.0, 104.0, 104.0])
+
+        long_sig = np.array([True, False, False])
+        short_sig = np.zeros(3, dtype=bool)
+        # SL anchor is at -300.0 -> SL dist = 100.375 - (-300.0) = 400.375 pts -> contracts = 0
+        sl_long = np.array([-300.0, -300.0, -300.0])
+        sl_short = np.array([500.0, 500.0, 500.0])
+        is_mid = np.zeros(3, dtype=bool)
+        force_flat = np.zeros(3, dtype=bool)
+
+        sigs = StrategySignals(
+            bull_ebp=long_sig,
+            bear_ebp=short_sig,
+            ema=np.array([90.0] * 3),
+            long_signal=long_sig,
+            short_signal=short_sig,
+            sl_long=sl_long,
+            sl_short=sl_short,
+            is_midpoint_rule=is_mid,
+            range_pts=np.array([10.0] * 3),
+        )
+
+        res = run_numba_execution(
+            open_arr, high_arr, low_arr, close_arr, sigs, force_flat, StrategyConfig()
+        )
+        self.assertEqual(len(res.entry_bars), 0)
+        self.assertEqual(res.skipped_by_contract_cap, 1, "Contracts < 1 must increment skipped_by_contract_cap")
+
+    def test_drawdown_includes_initial_capital_baseline(self):
+        """Drawdowns must measure against initial capital peak ($50,000) rather than only within-series peak."""
+        times = pd.date_range("2024-01-08 09:30:00", periods=2, freq="5min", tz="America/New_York")
+        df = pd.DataFrame(
+            {"Open": [100.0, 100.0], "High": [105.0, 105.0], "Low": [95.0, 95.0], "Close": [100.0, 100.0]},
+            index=times,
+        )
+        # Create mock ExecutionResult with immediate loss of $2,000 from $50,000 initial capital
+        exec_res = ExecutionResult(
+            entry_bars=np.array([0]),
+            exit_bars=np.array([1]),
+            directions=np.array([1]),
+            entry_prices=np.array([100.0]),
+            exit_prices=np.array([90.0]),
+            sl_prices=np.array([90.0]),
+            tp_prices=np.array([120.0]),
+            sl_dists=np.array([10.0]),
+            contracts=np.array([10]),
+            gross_pts=np.array([-10.0]),
+            net_pnl_usd=np.array([-2000.0]),
+            commission_usd=np.array([12.4]),
+            exit_reasons=np.array([1]),
+            used_midpoint_rule=np.array([0]),
+            skipped_by_contract_cap=0,
+            peak_concurrent_contracts=10,
+            peak_concurrent_slots=1,
+            equity_realized=np.array([0.0, -2000.0]),
+            equity_unrealized=np.array([0.0, 0.0]),
+            mtm_equity=np.array([50000.0, 48000.0]),
+            open_contracts_series=np.array([10, 0]),
+        )
+        metrics = calculate_performance_metrics(df, exec_res, StrategyConfig(initial_capital=50000.0))
+        # Drawdown from 50000 to 48000 must be 2000.0
+        self.assertEqual(metrics["max_intraday_drawdown"], 2000.0)
+        self.assertEqual(metrics["max_eod_drawdown"], 2000.0)
+
+    def test_daily_pnl_and_returns_include_day_one(self):
+        """Single day backtest must correctly report Day 1 PnL in worst and best single day metrics."""
+        times = pd.date_range("2024-01-08 09:30:00", periods=2, freq="5min", tz="America/New_York")
+        df = pd.DataFrame(
+            {"Open": [100.0, 100.0], "High": [105.0, 105.0], "Low": [95.0, 95.0], "Close": [100.0, 100.0]},
+            index=times,
+        )
+        exec_res = ExecutionResult(
+            entry_bars=np.array([0]),
+            exit_bars=np.array([1]),
+            directions=np.array([1]),
+            entry_prices=np.array([100.0]),
+            exit_prices=np.array([105.0]),
+            sl_prices=np.array([90.0]),
+            tp_prices=np.array([120.0]),
+            sl_dists=np.array([10.0]),
+            contracts=np.array([5]),
+            gross_pts=np.array([5.0]),
+            net_pnl_usd=np.array([500.0]),
+            commission_usd=np.array([6.2]),
+            exit_reasons=np.array([2]),
+            used_midpoint_rule=np.array([0]),
+            skipped_by_contract_cap=0,
+            peak_concurrent_contracts=5,
+            peak_concurrent_slots=1,
+            equity_realized=np.array([0.0, 500.0]),
+            equity_unrealized=np.array([0.0, 0.0]),
+            mtm_equity=np.array([50000.0, 50500.0]),
+            open_contracts_series=np.array([5, 0]),
+        )
+        metrics = calculate_performance_metrics(df, exec_res, StrategyConfig(initial_capital=50000.0))
+        self.assertEqual(metrics["worst_single_day_pnl"], 500.0)
+        self.assertEqual(metrics["best_single_day_pnl"], 500.0)
 
 
 if __name__ == "__main__":

@@ -122,7 +122,7 @@ def _ebp_numba_kernel(
         # -------------------------------------------------------------
         # STEP 1: Evaluate trade entry at Open of Bar i (from Bar i-1 signal)
         # -------------------------------------------------------------
-        if i > 0:
+        if i > 0 and not force_flatten_arr[i] and i < n_bars - 1:
             sig_idx = i - 1
             has_long = long_signal[sig_idx]
             has_short = short_signal[sig_idx]
@@ -133,27 +133,28 @@ def _ebp_numba_kernel(
                 sl_struct = sl_long_arr[sig_idx]
                 sl_dist = entry_price - sl_struct
 
-                if sl_dist > 0.0:
+                # Invalid gap guard: Open_{t+1} gapped beyond stop or sl_dist <= 0
+                if open_arr[i] > sl_struct and sl_dist > 0.0:
                     raw_contracts = risk_per_trade_usd / (sl_dist * point_value)
                     # Strict half-up arithmetic rounding
                     contracts = int(math.floor(raw_contracts + 0.5))
-                    if contracts >= 1:
-                        if (current_open_contracts + contracts) <= max_prop_contracts:
-                            # Enter long trade slot
-                            tp_price = entry_price + (sl_dist * rr_ratio)
-                            slot = num_active
-                            active_dir[slot] = 1
-                            active_entry_bar[slot] = i
-                            active_entry_price[slot] = entry_price
-                            active_sl_price[slot] = sl_struct
-                            active_tp_price[slot] = tp_price
-                            active_sl_dist[slot] = sl_dist
-                            active_contracts[slot] = contracts
-                            active_midpoint_rule[slot] = 1 if is_midpoint_arr[sig_idx] else 0
-                            num_active += 1
-                            current_open_contracts += contracts
-                        else:
-                            skipped_by_contract_cap += 1
+                    # Rejection rule: Contracts < 1 OR (Current_Open_Contracts + Contracts) > 50
+                    if contracts < 1 or (current_open_contracts + contracts) > max_prop_contracts:
+                        skipped_by_contract_cap += 1
+                    else:
+                        # Enter long trade slot
+                        tp_price = entry_price + (sl_dist * rr_ratio)
+                        slot = num_active
+                        active_dir[slot] = 1
+                        active_entry_bar[slot] = i
+                        active_entry_price[slot] = entry_price
+                        active_sl_price[slot] = sl_struct
+                        active_tp_price[slot] = tp_price
+                        active_sl_dist[slot] = sl_dist
+                        active_contracts[slot] = contracts
+                        active_midpoint_rule[slot] = 1 if is_midpoint_arr[sig_idx] else 0
+                        num_active += 1
+                        current_open_contracts += contracts
 
             elif has_short and not has_long:
                 # Short entry fill with adverse slippage
@@ -161,27 +162,28 @@ def _ebp_numba_kernel(
                 sl_struct = sl_short_arr[sig_idx]
                 sl_dist = sl_struct - entry_price
 
-                if sl_dist > 0.0:
+                # Invalid gap guard: Open_{t+1} gapped beyond stop or sl_dist <= 0
+                if open_arr[i] < sl_struct and sl_dist > 0.0:
                     raw_contracts = risk_per_trade_usd / (sl_dist * point_value)
                     # Strict half-up arithmetic rounding
                     contracts = int(math.floor(raw_contracts + 0.5))
-                    if contracts >= 1:
-                        if (current_open_contracts + contracts) <= max_prop_contracts:
-                            # Enter short trade slot
-                            tp_price = entry_price - (sl_dist * rr_ratio)
-                            slot = num_active
-                            active_dir[slot] = -1
-                            active_entry_bar[slot] = i
-                            active_entry_price[slot] = entry_price
-                            active_sl_price[slot] = sl_struct
-                            active_tp_price[slot] = tp_price
-                            active_sl_dist[slot] = sl_dist
-                            active_contracts[slot] = contracts
-                            active_midpoint_rule[slot] = 1 if is_midpoint_arr[sig_idx] else 0
-                            num_active += 1
-                            current_open_contracts += contracts
-                        else:
-                            skipped_by_contract_cap += 1
+                    # Rejection rule: Contracts < 1 OR (Current_Open_Contracts + Contracts) > 50
+                    if contracts < 1 or (current_open_contracts + contracts) > max_prop_contracts:
+                        skipped_by_contract_cap += 1
+                    else:
+                        # Enter short trade slot
+                        tp_price = entry_price - (sl_dist * rr_ratio)
+                        slot = num_active
+                        active_dir[slot] = -1
+                        active_entry_bar[slot] = i
+                        active_entry_price[slot] = entry_price
+                        active_sl_price[slot] = sl_struct
+                        active_tp_price[slot] = tp_price
+                        active_sl_dist[slot] = sl_dist
+                        active_contracts[slot] = contracts
+                        active_midpoint_rule[slot] = 1 if is_midpoint_arr[sig_idx] else 0
+                        num_active += 1
+                        current_open_contracts += contracts
 
         # Track concurrent peaks
         if current_open_contracts > peak_concurrent_contracts:

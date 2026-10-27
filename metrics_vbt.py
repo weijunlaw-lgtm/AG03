@@ -85,12 +85,12 @@ def trades_to_dataframe(
                 "exit_time": timestamps[ex_bar],
                 "hold_time_minutes": (ex_bar - en_bar) * 5,
                 "contracts": exec_res.contracts[i],
-                "entry_price": round(exec_res.entry_prices[i], 2),
-                "exit_price": round(exec_res.exit_prices[i], 2),
-                "sl_price": round(exec_res.sl_prices[i], 2),
-                "tp_price": round(exec_res.tp_prices[i], 2),
-                "sl_distance_pts": round(exec_res.sl_dists[i], 2),
-                "gross_pts": round(exec_res.gross_pts[i], 2),
+                "entry_price": round(exec_res.entry_prices[i], 4),
+                "exit_price": round(exec_res.exit_prices[i], 4),
+                "sl_price": round(exec_res.sl_prices[i], 4),
+                "tp_price": round(exec_res.tp_prices[i], 4),
+                "sl_distance_pts": round(exec_res.sl_dists[i], 4),
+                "gross_pts": round(exec_res.gross_pts[i], 4),
                 "net_pnl_usd": round(exec_res.net_pnl_usd[i], 2),
                 "commission_usd": round(exec_res.commission_usd[i], 2),
                 "exit_reason": reason_map.get(exec_res.exit_reasons[i], "Unknown"),
@@ -109,6 +109,40 @@ def calculate_performance_metrics(
     """
     cfg = config or StrategyConfig()
     n_trades = len(exec_res.entry_bars)
+
+    # Handle empty DataFrame safely
+    if len(df) == 0:
+        return {
+            "total_trades": 0,
+            "total_net_profit": 0.0,
+            "gross_profit": 0.0,
+            "gross_loss": 0.0,
+            "total_commissions": 0.0,
+            "profit_factor": 0.0,
+            "sharpe_ratio": 0.0,
+            "sortino_ratio": 0.0,
+            "calmar_ratio": 0.0,
+            "max_eod_drawdown": 0.0,
+            "max_intraday_drawdown": 0.0,
+            "worst_single_day_pnl": 0.0,
+            "best_single_day_pnl": 0.0,
+            "avg_hold_time_minutes": 0.0,
+            "median_hold_time_minutes": 0.0,
+            "avg_contract_size": 0.0,
+            "avg_long_contract_size": 0.0,
+            "avg_short_contract_size": 0.0,
+            "peak_concurrent_contracts": 0,
+            "peak_concurrent_slots": 0,
+            "skipped_by_contract_cap": exec_res.skipped_by_contract_cap if exec_res else 0,
+            "overall_win_rate_pct": 0.0,
+            "long_win_rate_pct": 0.0,
+            "total_long_trades": 0,
+            "short_win_rate_pct": 0.0,
+            "total_short_trades": 0,
+            "avg_sl_distance_pts": 0.0,
+            "pct_midpoint_rule_trades": 0.0,
+            "avg_trades_per_day": 0.0,
+        }
 
     # 1. Financial totals & ratios
     if n_trades > 0:
@@ -180,29 +214,36 @@ def calculate_performance_metrics(
         avg_sl_dist = 0.0
         pct_midpoint = 0.0
 
-    # 2. Equity curve analytics (intraday & EOD drawdowns)
+    # 2. Equity curve analytics (intraday & EOD drawdowns incorporated with initial capital peak)
     mtm_series = pd.Series(exec_res.mtm_equity, index=df.index)
-    peak_mtm = mtm_series.cummax()
+    peak_mtm = np.maximum(cfg.initial_capital, mtm_series.cummax())
     intraday_dd = mtm_series - peak_mtm
-    max_intraday_dd = round(float(abs(intraday_dd.min())), 2)
+    max_intraday_dd = round(float(abs(intraday_dd.min())), 2) if len(intraday_dd) > 0 else 0.0
 
-    # EOD Drawdown & Daily PnL
+    # EOD Drawdown & Daily PnL (incorporating Day 1 PnL vs initial capital)
     eod_equity = mtm_series.groupby(mtm_series.index.date).last()
-    eod_peak = eod_equity.cummax()
+    eod_peak = np.maximum(cfg.initial_capital, eod_equity.cummax())
     eod_dd = eod_equity - eod_peak
-    max_eod_dd = round(float(abs(eod_dd.min())), 2)
+    max_eod_dd = round(float(abs(eod_dd.min())), 2) if len(eod_dd) > 0 else 0.0
 
-    daily_pnl = eod_equity.diff()
-    valid_daily_pnl = daily_pnl.dropna()
-    if len(valid_daily_pnl) > 0:
-        worst_single_day = round(float(valid_daily_pnl.min()), 2)
-        best_single_day = round(float(valid_daily_pnl.max()), 2)
+    if len(eod_equity) > 0:
+        first_day_pnl = eod_equity.iloc[0] - cfg.initial_capital
+        subsequent_pnl = eod_equity.diff().iloc[1:]
+        daily_pnl = pd.concat([pd.Series([first_day_pnl], index=[eod_equity.index[0]]), subsequent_pnl])
+        worst_single_day = round(float(daily_pnl.min()), 2)
+        best_single_day = round(float(daily_pnl.max()), 2)
     else:
         worst_single_day = 0.0
         best_single_day = 0.0
 
-    # 3. Sharpe, Sortino, Calmar ratios
-    daily_rets = eod_equity.pct_change().dropna()
+    # 3. Sharpe, Sortino, Calmar ratios (incorporating Day 1 returns vs initial capital)
+    if len(eod_equity) > 0:
+        first_day_ret = (eod_equity.iloc[0] - cfg.initial_capital) / cfg.initial_capital
+        subsequent_rets = eod_equity.pct_change().iloc[1:]
+        daily_rets = pd.concat([pd.Series([first_day_ret], index=[eod_equity.index[0]]), subsequent_rets]).dropna()
+    else:
+        daily_rets = pd.Series(dtype=np.float64)
+
     std_rets = float(daily_rets.std()) if len(daily_rets) > 1 else 0.0
     mean_rets = float(daily_rets.mean()) if len(daily_rets) > 0 else 0.0
 
@@ -223,7 +264,7 @@ def calculate_performance_metrics(
 
     # Calmar ratio
     total_ret = total_net_profit / cfg.initial_capital
-    calendar_days = max(1, (df.index[-1] - df.index[0]).days)
+    calendar_days = max(1, (df.index[-1].date() - df.index[0].date()).days + 1)
     annualized_return = total_ret * (365.25 / calendar_days)
     max_eod_dd_pct = max_eod_dd / cfg.initial_capital
     if max_eod_dd_pct > 1e-6:

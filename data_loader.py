@@ -21,6 +21,9 @@ def normalize_dataframe(
 
     # Column name mapping (case-insensitive)
     col_map = {}
+    date_col = None
+    time_col = None
+
     for col in df.columns:
         c_lower = str(col).strip().lower()
         if c_lower in ("open", "o"):
@@ -33,6 +36,12 @@ def normalize_dataframe(
             col_map[col] = "Close"
         elif c_lower in ("volume", "vol", "v"):
             col_map[col] = "Volume"
+        elif c_lower in ("datetime", "timestamp", "dt"):
+            date_col = col
+        elif c_lower == "date":
+            date_col = col
+        elif c_lower == "time":
+            time_col = col
 
     df = df.rename(columns=col_map)
     required = ["Open", "High", "Low", "Close"]
@@ -45,24 +54,32 @@ def normalize_dataframe(
 
     # Ensure DatetimeIndex
     if not isinstance(df.index, pd.DatetimeIndex):
-        if "datetime" in df.columns:
-            df.index = pd.to_datetime(df["datetime"])
-            df = df.drop(columns=["datetime"])
-        elif "date" in df.columns:
-            df.index = pd.to_datetime(df["date"])
-            df = df.drop(columns=["date"])
-        elif "timestamp" in df.columns:
-            df.index = pd.to_datetime(df["timestamp"])
-            df = df.drop(columns=["timestamp"])
+        if date_col is not None and time_col is not None and date_col in df.columns and time_col in df.columns:
+            # Combine Date and Time columns (e.g. '2024-01-08' and '09:30:00')
+            df.index = pd.to_datetime(df[date_col].astype(str) + " " + df[time_col].astype(str))
+            df = df.drop(columns=[date_col, time_col])
+        elif date_col is not None and date_col in df.columns:
+            df.index = pd.to_datetime(df[date_col])
+            df = df.drop(columns=[date_col])
+        elif time_col is not None and time_col in df.columns:
+            df.index = pd.to_datetime(df[time_col])
+            df = df.drop(columns=[time_col])
         else:
             try:
                 df.index = pd.to_datetime(df.index)
             except Exception as e:
                 raise ValueError(f"Could not convert index to DatetimeIndex: {e}")
 
-    # Timezone normalization to America/New_York
+    # Timezone normalization to America/New_York across DST transitions
     if df.index.tz is None:
-        df.index = df.index.tz_localize(timezone)
+        try:
+            df.index = df.index.tz_localize(
+                timezone, nonexistent="shift_forward", ambiguous="infer"
+            )
+        except Exception:
+            df.index = df.index.tz_localize(
+                timezone, nonexistent="shift_forward", ambiguous=False
+            )
     else:
         df.index = df.index.tz_convert(timezone)
 

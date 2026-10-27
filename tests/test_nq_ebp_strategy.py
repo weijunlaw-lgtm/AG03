@@ -16,7 +16,6 @@ Tests cover:
 """
 
 import math
-import os
 import unittest
 import numpy as np
 import pandas as pd
@@ -24,20 +23,16 @@ import vectorbt as vbt
 
 from config import GridSearchConfig, StrategyConfig
 from data_loader import (
-    compute_session_masks,
     generate_synthetic_mnq_data,
     normalize_dataframe,
-    prepare_data,
 )
-from execution_kernel import ExecutionResult, _ebp_numba_kernel, run_numba_execution
+from execution_kernel import ExecutionResult, run_numba_execution
 from metrics_vbt import (
-    build_vbt_trades,
     calculate_performance_metrics,
-    trades_to_dataframe,
 )
 from nq_ebp_strategy import NQEBPStrategy
 from run_grid_search import run_grid_search
-from signals import StrategySignals, compute_ema, compute_signals
+from signals import StrategySignals, compute_signals
 
 
 class TestNQEBPGeometryAndSignals(unittest.TestCase):

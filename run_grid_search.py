@@ -10,12 +10,11 @@ Outputs institutional leaderboard sorted by performance.
 
 from dataclasses import replace
 from typing import Optional
-import itertools
 import numpy as np
 import pandas as pd
 
-from config import GridSearchConfig, StrategyConfig
-from data_loader import compute_session_masks, generate_synthetic_mnq_data, prepare_data
+from config import GridSearchConfig
+from data_loader import compute_session_masks, generate_synthetic_mnq_data
 from execution_kernel import run_numba_execution
 from metrics_vbt import calculate_performance_metrics
 from signals import compute_signals

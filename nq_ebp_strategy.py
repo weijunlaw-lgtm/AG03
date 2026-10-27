@@ -8,8 +8,6 @@ VectorBT, Numba (@njit), pandas, and numpy.
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Union
 import argparse
-import os
-import sys
 import pandas as pd
 import vectorbt as vbt
 

@@ -11,7 +11,7 @@ Enforces:
 """
 
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Optional
 import math
 import numpy as np
 from numba import njit

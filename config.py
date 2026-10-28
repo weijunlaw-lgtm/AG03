@@ -27,6 +27,7 @@ class StrategyConfig:
     session_start_est: Optional[str] = "18:00"  # CME Globex open; None for all bars
     risk_per_trade_usd: float = 300.0  # Fixed USD risk per trade
     max_prop_contracts: int = 50  # Dynamic portfolio contract cap
+    min_sl_distance_pts: float = 0.0  # Minimum structural stop distance (pts); 0.0 disables filter
     large_candle_threshold_pts: float = 50.0  # 50pt rule threshold
     slippage_ticks_per_side: float = 1.5  # 1.5 ticks = 0.375 points
     tick_size: float = 0.25  # MNQ tick size (pts)

@@ -75,6 +75,7 @@ def _ebp_numba_kernel(
     commission_rt: float,
     point_value: float,
     initial_capital: float,
+    min_sl_distance_pts: float = 0.0,
 ):
     n_bars = len(open_arr)
     max_trades = max(1000, n_bars)
@@ -141,8 +142,8 @@ def _ebp_numba_kernel(
                 sl_struct = sl_long_arr[sig_idx]
                 sl_dist = entry_price - sl_struct
 
-                # Invalid gap guard: Open_{t+1} gapped beyond stop or sl_dist <= 0
-                if open_arr[i] > sl_struct and sl_dist > 0.0:
+                # Invalid gap guard: Open_{t+1} gapped beyond stop or sl_dist < min_sl_distance_pts
+                if open_arr[i] > sl_struct and sl_dist > 0.0 and sl_dist >= min_sl_distance_pts:
                     raw_contracts = risk_per_trade_usd / (sl_dist * point_value)
                     # Strict half-up arithmetic rounding
                     contracts = int(math.floor(raw_contracts + 0.5))
@@ -172,8 +173,8 @@ def _ebp_numba_kernel(
                 sl_struct = sl_short_arr[sig_idx]
                 sl_dist = sl_struct - entry_price
 
-                # Invalid gap guard: Open_{t+1} gapped beyond stop or sl_dist <= 0
-                if open_arr[i] < sl_struct and sl_dist > 0.0:
+                # Invalid gap guard: Open_{t+1} gapped beyond stop or sl_dist < min_sl_distance_pts
+                if open_arr[i] < sl_struct and sl_dist > 0.0 and sl_dist >= min_sl_distance_pts:
                     raw_contracts = risk_per_trade_usd / (sl_dist * point_value)
                     # Strict half-up arithmetic rounding
                     contracts = int(math.floor(raw_contracts + 0.5))
@@ -423,6 +424,7 @@ def run_numba_execution(
         float(cfg.commission_rt_per_contract),
         float(cfg.point_value),
         float(cfg.initial_capital),
+        float(getattr(cfg, "min_sl_distance_pts", 0.0)),
     )
 
     return ExecutionResult(

@@ -1,7 +1,8 @@
 """
 Automated Report and Dashboard Generator for NQ EBP Strategy Backtests.
 Produces interactive, standalone HTML dashboards featuring comprehensive
-Win vs Loss analytics, MAE/MFE excursions, time-based plots, and robust offline styling.
+Win vs Loss analytics, MAE/MFE excursions, time-based plots, average PnL throughout the day,
+and robust offline styling.
 """
 
 from typing import Any, Dict
@@ -22,6 +23,7 @@ def generate_html_dashboard(
     Uses pure embedded CSS (zero external CSS framework dependency) to ensure
     immediate rendering in all environments (offline, airgapped, file://, CDN-blocked).
     Guarantees strict visual containment with zero chart overlap.
+    Includes Average PnL per trade throughout the day (EST).
     """
     # Downsample equity series for smooth web charting
     if len(equity_series) > 10000:
@@ -93,6 +95,7 @@ def generate_html_dashboard(
         hourly = trades_df_copy.groupby("entry_hour")["net_pnl_usd"].agg(
             trades="count",
             pnl="sum",
+            avg_pnl="mean",
             win_rate=lambda s: float((s > 0).mean() * 100.0),
         ).reset_index()
 
@@ -100,6 +103,7 @@ def generate_html_dashboard(
         hourly = all_hours.merge(hourly, on="entry_hour", how="left").fillna(0)
         hours_labels = [f"{h:02d}:00" for h in hourly["entry_hour"]]
         hourly_pnl = [round(float(v), 2) for v in hourly["pnl"]]
+        hourly_avg_pnl = [round(float(v), 2) for v in hourly["avg_pnl"]]
         hourly_wr = [round(float(v), 1) for v in hourly["win_rate"]]
         hourly_trades = [int(v) for v in hourly["trades"]]
 
@@ -109,11 +113,13 @@ def generate_html_dashboard(
         dow_grouped = trades_df_copy.groupby("dow")["net_pnl_usd"].agg(
             trades="count",
             pnl="sum",
+            avg_pnl="mean",
             win_rate=lambda s: float((s > 0).mean() * 100.0),
         ).reindex(dow_order).fillna(0).reset_index()
 
         dow_labels = list(dow_grouped["dow"])
         dow_pnl = [round(float(v), 2) for v in dow_grouped["pnl"]]
+        dow_avg_pnl = [round(float(v), 2) for v in dow_grouped["avg_pnl"]]
         dow_wr = [round(float(v), 1) for v in dow_grouped["win_rate"]]
         dow_trades = [int(v) for v in dow_grouped["trades"]]
 
@@ -162,8 +168,8 @@ def generate_html_dashboard(
         dur_wr = [round(float(v), 1) for v in dur_grp["win_rate"]]
 
     else:
-        hours_labels, hourly_pnl, hourly_wr, hourly_trades = [], [], [], []
-        dow_labels, dow_pnl, dow_wr, dow_trades = [], [], [], []
+        hours_labels, hourly_pnl, hourly_avg_pnl, hourly_wr, hourly_trades = [], [], [], [], []
+        dow_labels, dow_pnl, dow_avg_pnl, dow_wr, dow_trades = [], [], [], [], []
         tl_dates, tl_win_cum, tl_loss_cum = [], [], []
         win_mae_r, win_mfe_r, win_text = [], [], []
         loss_mae_r, loss_mfe_r, loss_text = [], [], []
@@ -186,14 +192,14 @@ def generate_html_dashboard(
 
     # Static HTML tables pre-rendered for clean presentation
     hourly_rows = "".join([
-        f"<tr><td>{hl}</td><td>{trades:,}</td><td class='{('text-emerald' if pnl >= 0 else 'text-rose')}'>${pnl:+,.2f}</td><td>{wr:.1f}%</td></tr>"
-        for hl, trades, pnl, wr in zip(hours_labels, hourly_trades, hourly_pnl, hourly_wr)
+        f"<tr><td>{hl}</td><td>{trades:,}</td><td class='{('text-emerald' if pnl >= 0 else 'text-rose')}'>${pnl:+,.2f}</td><td class='font-bold {('text-emerald' if apnl >= 0 else 'text-rose')}'>${apnl:+,.2f}</td><td>{wr:.1f}%</td></tr>"
+        for hl, trades, pnl, apnl, wr in zip(hours_labels, hourly_trades, hourly_pnl, hourly_avg_pnl, hourly_wr)
         if trades > 0
     ])
 
     dow_rows = "".join([
-        f"<tr><td class='font-bold'>{dl}</td><td>{dt:,}</td><td class='{('text-emerald' if dp >= 0 else 'text-rose')}'>${dp:+,.2f}</td><td>{dwr:.1f}%</td></tr>"
-        for dl, dt, dp, dwr in zip(dow_labels, dow_trades, dow_pnl, dow_wr)
+        f"<tr><td class='font-bold'>{dl}</td><td>{dt:,}</td><td class='{('text-emerald' if dp >= 0 else 'text-rose')}'>${dp:+,.2f}</td><td class='font-bold {('text-emerald' if dap >= 0 else 'text-rose')}'>${dap:+,.2f}</td><td>{dwr:.1f}%</td></tr>"
+        for dl, dt, dp, dap, dwr in zip(dow_labels, dow_trades, dow_pnl, dow_avg_pnl, dow_wr)
     ])
 
     dur_rows = "".join([
@@ -616,26 +622,65 @@ def generate_html_dashboard(
       </div>
     </div>
 
-    <!-- 7. Session Profiling: Hourly & Day of Week -->
+    <!-- 7. Session Profiling: Average PnL Throughout the Day & Hourly / DOW Breakdown -->
+    <div class="grid-2col">
+      <!-- 7a. Average PnL Throughout the Day (EST) -->
+      <div class="card">
+        <h2>
+          <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background-color:#38bdf8;"></span>
+          Average PnL per Trade Throughout the Day (EST)
+        </h2>
+        <p class="subtitle">Expected value (EV) in $ per trade for each trading hour (00:00 to 23:00 EST).</p>
+        <div id="avgPnlHourlyChart" class="chart-container" style="height: 360px;"></div>
+      </div>
+
+      <!-- 7b. Total Net PnL & Win Rate by Entry Hour (EST) -->
+      <div class="card">
+        <h2>
+          <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background-color:#10b981;"></span>
+          Total Net PnL & Win Rate by Entry Hour (EST)
+        </h2>
+        <p class="subtitle">Cumulative net profit and win rate percentage across 24 market hours.</p>
+        <div id="hourlyChart" class="chart-container" style="height: 360px;"></div>
+      </div>
+    </div>
+
+    <!-- 7c. Hourly Distribution Table & Day of Week Performance -->
     <div class="grid-2col">
       <div class="card">
-        <h2>Performance by Entry Hour (EST)</h2>
-        <p class="subtitle">Intraday session profile and edge distribution across 24 market hours.</p>
-        <div id="hourlyChart" class="chart-container" style="height: 360px;"></div>
-        <div class="table-container" style="max-height: 220px; overflow-y: auto;">
+        <h2>Hourly Performance & Expected Value Breakdown</h2>
+        <p class="subtitle">Detailed trade volume, net PnL, and average payoff per entry hour.</p>
+        <div class="table-container" style="max-height: 280px; overflow-y: auto;">
           <table>
-            <thead><tr><th>Hour (EST)</th><th>Trades</th><th>Net PnL</th><th>Win Rate</th></tr></thead>
+            <thead>
+              <tr>
+                <th>Hour (EST)</th>
+                <th>Trades</th>
+                <th>Total Net PnL</th>
+                <th>Avg PnL / Trade</th>
+                <th>Win Rate</th>
+              </tr>
+            </thead>
             <tbody class="font-mono">{hourly_rows}</tbody>
           </table>
         </div>
       </div>
+
       <div class="card">
         <h2>Performance by Day of Week</h2>
         <p class="subtitle">Weekly cyclicality and edge stability across trading sessions.</p>
-        <div id="dowChart" class="chart-container" style="height: 360px;"></div>
+        <div id="dowChart" class="chart-container" style="height: 240px;"></div>
         <div class="table-container">
           <table>
-            <thead><tr><th>Day of Week</th><th>Trades</th><th>Net PnL</th><th>Win Rate</th></tr></thead>
+            <thead>
+              <tr>
+                <th>Day of Week</th>
+                <th>Trades</th>
+                <th>Total Net PnL</th>
+                <th>Avg PnL / Trade</th>
+                <th>Win Rate</th>
+              </tr>
+            </thead>
             <tbody class="font-mono">{dow_rows}</tbody>
           </table>
         </div>
@@ -726,7 +771,7 @@ def generate_html_dashboard(
 
       function showOfflineFallbacks() {{
         const chartIds = [
-          'equityChart', 'drawdownChart', 'maeMfeChart', 'hourlyChart',
+          'equityChart', 'drawdownChart', 'maeMfeChart', 'avgPnlHourlyChart', 'hourlyChart',
           'dowChart', 'timelineChart', 'durationChart', 'exitReasonChart'
         ];
         chartIds.forEach(id => {{
@@ -894,13 +939,42 @@ def generate_html_dashboard(
           legend: {{ orientation: 'h', y: -0.22 }}
         }});
 
-        // 6. Hourly Performance Chart (EST)
+        // 6. Average PnL per Trade Throughout the Day (EST)
+        safePlot('avgPnlHourlyChart', [
+          {{
+            x: {json.dumps(hours_labels)},
+            y: {json.dumps(hourly_avg_pnl)},
+            type: 'bar',
+            name: 'Avg PnL ($/trade)',
+            marker: {{
+              color: {json.dumps(hourly_avg_pnl)}.map(v => v >= 0 ? '#10b981' : '#f43f5e')
+            }}
+          }},
+          {{
+            x: {json.dumps(hours_labels)},
+            y: {json.dumps(hourly_trades)},
+            type: 'scatter',
+            mode: 'lines+markers',
+            name: 'Trade Count',
+            yaxis: 'y2',
+            line: {{ color: '#38bdf8', width: 2, dash: 'dot' }}
+          }}
+        ], {{
+          template: 'plotly_dark',
+          margin: {{ l: 65, r: 50, t: 20, b: 40 }},
+          xaxis: {{ title: 'Entry Hour (EST)', showgrid: false }},
+          yaxis: {{ title: 'Avg PnL ($ / Trade)', showgrid: true, gridcolor: '#1e293b', tickprefix: '$' }},
+          yaxis2: {{ title: 'Trades Count', overlaying: 'y', side: 'right', showgrid: false }},
+          legend: {{ orientation: 'h', y: -0.22 }}
+        }});
+
+        // 7. Total Hourly Net PnL & Win Rate Chart (EST)
         safePlot('hourlyChart', [
           {{
             x: {json.dumps(hours_labels)},
             y: {json.dumps(hourly_pnl)},
             type: 'bar',
-            name: 'Net PnL ($)',
+            name: 'Total Net PnL ($)',
             marker: {{
               color: {json.dumps(hourly_pnl)}.map(v => v >= 0 ? '#10b981' : '#f43f5e')
             }}
@@ -912,18 +986,18 @@ def generate_html_dashboard(
             mode: 'lines+markers',
             name: 'Win Rate (%)',
             yaxis: 'y2',
-            line: {{ color: '#38bdf8', width: 2 }}
+            line: {{ color: '#f59e0b', width: 2 }}
           }}
         ], {{
           template: 'plotly_dark',
           margin: {{ l: 65, r: 50, t: 20, b: 40 }},
           xaxis: {{ title: 'Entry Hour (EST)', showgrid: false }},
-          yaxis: {{ title: 'Net PnL ($)', showgrid: true, gridcolor: '#1e293b' }},
+          yaxis: {{ title: 'Total Net PnL ($)', showgrid: true, gridcolor: '#1e293b' }},
           yaxis2: {{ title: 'Win Rate (%)', overlaying: 'y', side: 'right', range: [0, 60], showgrid: false }},
           legend: {{ orientation: 'h', y: -0.22 }}
         }});
 
-        // 7. Day of Week Performance Chart
+        // 8. Day of Week Performance Chart
         safePlot('dowChart', [
           {{
             x: {json.dumps(dow_labels)},
@@ -952,7 +1026,7 @@ def generate_html_dashboard(
           legend: {{ orientation: 'h', y: -0.22 }}
         }});
 
-        // 8. Exit Reason Pie Chart
+        // 9. Exit Reason Pie Chart
         safePlot('exitReasonChart', [{{
           labels: {json.dumps(exit_labels)},
           values: {json.dumps(exit_values)},
@@ -968,7 +1042,7 @@ def generate_html_dashboard(
         // Window resize observer
         window.addEventListener('resize', () => {{
           [
-            'equityChart', 'drawdownChart', 'maeMfeChart', 'hourlyChart',
+            'equityChart', 'drawdownChart', 'maeMfeChart', 'avgPnlHourlyChart', 'hourlyChart',
             'dowChart', 'timelineChart', 'durationChart', 'exitReasonChart'
           ].forEach(id => {{
             const el = document.getElementById(id);

@@ -30,6 +30,7 @@ def main():
         flatten_time_est="16:05",
         risk_per_trade_usd=300.0,
         max_prop_contracts=50,
+        min_sl_distance_pts=12.0,
         slippage_ticks_per_side=1.5,
         commission_rt_per_contract=1.24,
     )

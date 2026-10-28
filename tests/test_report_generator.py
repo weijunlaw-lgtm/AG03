@@ -82,6 +82,7 @@ class TestReportGenerator(unittest.TestCase):
             "equityChart",
             "drawdownChart",
             "maeMfeChart",
+            "avgPnlHourlyChart",
             "hourlyChart",
             "dowChart",
             "timelineChart",
@@ -127,6 +128,47 @@ class TestReportGenerator(unittest.TestCase):
             output_path=self.output_test_html,
         )
         self.assertTrue(os.path.exists(path))
+
+    def test_min_sl_distance_pts_filter(self):
+        """Verify min_sl_distance_pts filters out micro-stop trades."""
+        import numpy as np
+        from config import StrategyConfig
+        from signals import StrategySignals
+        from execution_kernel import run_numba_execution
+
+        open_arr = np.array([100.0, 100.0, 100.0])
+        high_arr = np.array([105.0, 105.0, 105.0])
+        low_arr = np.array([95.0, 95.0, 95.0])
+        close_arr = np.array([104.0, 104.0, 104.0])
+        long_sig = np.array([True, False, False])
+        short_sig = np.zeros(3, dtype=bool)
+        # Entry price: 100.375, sl_struct: 95.0 -> sl_dist = 5.375 pts (< 10 pts)
+        sl_long = np.array([95.0, 95.0, 95.0])
+        sl_short = np.array([105.0, 105.0, 105.0])
+        is_mid = np.zeros(3, dtype=bool)
+        force_flat = np.zeros(3, dtype=bool)
+
+        sigs = StrategySignals(
+            bull_ebp=long_sig,
+            bear_ebp=short_sig,
+            ema=np.array([90.0] * 3),
+            long_signal=long_sig,
+            short_signal=short_sig,
+            sl_long=sl_long,
+            sl_short=sl_short,
+            is_midpoint_rule=is_mid,
+            range_pts=np.array([10.0] * 3),
+        )
+
+        # Baseline: min_sl_distance_pts = 0.0 -> trade is executed
+        cfg_0 = StrategyConfig(min_sl_distance_pts=0.0)
+        res_0 = run_numba_execution(open_arr, high_arr, low_arr, close_arr, sigs, force_flat, cfg_0)
+        self.assertEqual(len(res_0.entry_bars), 1)
+
+        # With min_sl_distance_pts = 10.0 -> sl_dist is 5.375 < 10.0 -> trade is skipped
+        cfg_10 = StrategyConfig(min_sl_distance_pts=10.0)
+        res_10 = run_numba_execution(open_arr, high_arr, low_arr, close_arr, sigs, force_flat, cfg_10)
+        self.assertEqual(len(res_10.entry_bars), 0)
 
 
 if __name__ == "__main__":

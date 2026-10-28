@@ -21,15 +21,7 @@ def generate_html_dashboard(
     Generate a self-contained, publication-grade dark-themed HTML report.
     Uses pure embedded CSS (zero external CSS framework dependency) to ensure
     immediate rendering in all environments (offline, airgapped, file://, CDN-blocked).
-    Integrates an asynchronous multi-CDN fallback Plotly loader with graceful degradation:
-    - Intra-Trade MAE vs MFE Scatter Plot (R-multiples)
-    - Time Plot 1: Performance by Hour of Day (EST)
-    - Time Plot 2: Performance by Day of Week
-    - Time Plot 3: Cumulative Winning vs Losing Trades PnL Timeline
-    - Hold Time Duration Analysis
-    - Exit Reason Distribution (Pie & Breakdown Table)
-    - Core MTM Equity Curve and Underwater Drawdown
-    - Comprehensive Side-by-Side Win vs Loss Tearsheet
+    Guarantees strict visual containment with zero chart overlap.
     """
     # Downsample equity series for smooth web charting
     if len(equity_series) > 10000:
@@ -192,7 +184,7 @@ def generate_html_dashboard(
         else "N/A"
     )
 
-    # Pre-render static HTML tables so the report displays instantly even without JavaScript
+    # Static HTML tables pre-rendered for clean presentation
     hourly_rows = "".join([
         f"<tr><td>{hl}</td><td>{trades:,}</td><td class='{('text-emerald' if pnl >= 0 else 'text-rose')}'>${pnl:+,.2f}</td><td>{wr:.1f}%</td></tr>"
         for hl, trades, pnl, wr in zip(hours_labels, hourly_trades, hourly_pnl, hourly_wr)
@@ -232,7 +224,7 @@ def generate_html_dashboard(
         for t in sample_trades
     ])
 
-    # Self-contained HTML with embedded styles (Zero external CSS dependency)
+    # Pure CSS layout with explicit containment and zero-bleed rules
     html_content = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -243,7 +235,6 @@ def generate_html_dashboard(
     :root {{
       --bg-page: #0b1120;
       --bg-card: #0f172a;
-      --bg-card-sub: #162036;
       --bg-table-head: #090e1a;
       --border-color: #1e293b;
       --border-highlight: #334155;
@@ -262,14 +253,21 @@ def generate_html_dashboard(
       color: var(--text-main);
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       line-height: 1.5;
-      padding: 1.25rem;
+      padding: 1.5rem;
+      overflow-x: hidden;
     }}
-    .max-container {{ max-width: 1380px; margin: 0 auto; display: flex; flex-direction: column; gap: 1.5rem; }}
+    .max-container {{
+      max-width: 1400px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 1.75rem;
+    }}
     
-    /* Typography & Utility */
-    h1 {{ font-size: 1.75rem; font-weight: 800; letter-spacing: -0.025em; color: #fff; }}
-    h2 {{ font-size: 1.125rem; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 0.5rem; }}
-    p.subtitle {{ font-size: 0.875rem; color: var(--text-muted); margin-top: 0.25rem; }}
+    /* Typography & Utilities */
+    h1 {{ font-size: 1.625rem; font-weight: 800; letter-spacing: -0.025em; color: #fff; }}
+    h2 {{ font-size: 1.05rem; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 0.5rem; }}
+    p.subtitle {{ font-size: 0.8125rem; color: var(--text-muted); margin-top: 0.2rem; }}
     .font-mono {{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }}
     .font-bold {{ font-weight: 700; }}
     .text-emerald {{ color: var(--accent-emerald) !important; }}
@@ -281,16 +279,19 @@ def generate_html_dashboard(
     .text-dim {{ color: var(--text-dim) !important; }}
     .text-right {{ text-align: right; }}
 
-    /* Cards */
+    /* Cards & Containment */
     .card {{
       background-color: var(--bg-card);
       border: 1px solid var(--border-color);
       border-radius: 0.875rem;
       padding: 1.25rem;
       box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.4);
+      min-width: 0;
+      overflow: hidden;
+      position: relative;
     }}
     .card-banner {{
-      background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #0f172a 100%);
+      background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 55%, #0f172a 100%);
       border: 1px solid #3730a3;
       padding: 1.5rem;
       display: flex;
@@ -301,13 +302,13 @@ def generate_html_dashboard(
     }}
 
     /* Badges */
-    .badge-group {{ display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.5rem; }}
+    .badge-group {{ display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.4rem; }}
     .badge {{
       display: inline-flex;
       align-items: center;
-      padding: 0.25rem 0.65rem;
+      padding: 0.2rem 0.6rem;
       border-radius: 9999px;
-      font-size: 0.75rem;
+      font-size: 0.725rem;
       font-weight: 600;
       border: 1px solid transparent;
     }}
@@ -315,7 +316,7 @@ def generate_html_dashboard(
     .badge-cyan {{ background-color: rgba(6, 182, 212, 0.15); color: #38bdf8; border-color: rgba(6, 182, 212, 0.3); }}
     .badge-indigo {{ background-color: rgba(99, 102, 241, 0.15); color: #a5b4fc; border-color: rgba(99, 102, 241, 0.3); }}
 
-    /* Grid Layouts */
+    /* Grids */
     .grid-kpi {{
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
@@ -323,17 +324,18 @@ def generate_html_dashboard(
     }}
     .grid-2col {{
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
       gap: 1.5rem;
+      align-items: start;
     }}
-    @media (max-width: 960px) {{
-      .grid-2col {{ grid-template-columns: 1fr; }}
+    @media (max-width: 992px) {{
+      .grid-2col {{ grid-template-columns: minmax(0, 1fr); }}
     }}
 
     /* Stat Cards */
-    .stat-title {{ font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }}
-    .stat-value {{ font-size: 1.625rem; font-weight: 800; margin-top: 0.25rem; }}
-    .stat-meta {{ font-size: 0.75rem; color: var(--text-dim); margin-top: 0.25rem; }}
+    .stat-title {{ font-size: 0.725rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }}
+    .stat-value {{ font-size: 1.55rem; font-weight: 800; margin-top: 0.2rem; }}
+    .stat-meta {{ font-size: 0.725rem; color: var(--text-dim); margin-top: 0.2rem; }}
 
     /* Tables */
     .table-container {{
@@ -352,7 +354,7 @@ def generate_html_dashboard(
       background-color: var(--bg-table-head);
       color: var(--text-muted);
       text-transform: uppercase;
-      font-size: 0.7rem;
+      font-size: 0.6875rem;
       font-weight: 700;
       letter-spacing: 0.05em;
       padding: 0.65rem 0.85rem;
@@ -368,30 +370,23 @@ def generate_html_dashboard(
     .table-ledger {{ max-height: 420px; overflow-y: auto; display: block; }}
     .table-ledger thead {{ position: sticky; top: 0; z-index: 10; }}
 
-    /* Chart Containers */
-    .chart-box {{
+    /* Strict Chart Containers (Never Flex) */
+    .chart-container {{
       width: 100%;
+      display: block;
       position: relative;
+      margin-top: 0.75rem;
+      background: transparent;
+      overflow: hidden;
       border-radius: 0.5rem;
-      background: var(--bg-card);
-      min-height: 350px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }}
-    .chart-placeholder {{
-      color: var(--text-dim);
-      font-size: 0.8125rem;
-      text-align: center;
-      padding: 1.5rem;
     }}
     .chart-fallback-notice {{
-      background: rgba(15, 23, 42, 0.8);
+      background: rgba(15, 23, 42, 0.9);
       border: 1px dashed var(--border-highlight);
       border-radius: 0.5rem;
-      padding: 1rem;
-      margin-top: 0.5rem;
-      font-size: 0.75rem;
+      padding: 1.25rem;
+      text-align: center;
+      font-size: 0.8125rem;
       color: var(--text-muted);
     }}
 
@@ -416,17 +411,17 @@ def generate_html_dashboard(
 <body>
   <div class="max-container">
 
-    <!-- Executive Header Banner -->
+    <!-- 1. Executive Header Banner -->
     <div class="card card-banner">
       <div>
         <div class="badge-group">
           <span class="badge badge-emerald">Institutional Quant Suite</span>
           <span class="badge badge-cyan">Intra-Trade MAE & MFE Excursions</span>
-          <span class="badge badge-indigo">Time & Session Profiling</span>
+          <span class="badge badge-indigo">Zero Lookahead Execution</span>
         </div>
         <h1>{title}</h1>
         <p class="subtitle">
-          Zero Lookahead Bias • Multi-Slot Numba Execution Kernel • Dynamic 50-Contract Cap • Realistic Slippage & Commissions
+          Multi-Slot Numba Kernel • Dynamic 50-Contract Cap • Slippage: 1.5 Ticks • Comm: $1.24/contract R/T
         </p>
       </div>
       <div class="text-right">
@@ -436,7 +431,7 @@ def generate_html_dashboard(
       </div>
     </div>
 
-    <!-- KPI Metric Cards Grid -->
+    <!-- 2. Top-Level KPI Summary Grid -->
     <div class="grid-kpi">
       <div class="card">
         <div class="stat-title">Total Trades</div>
@@ -470,13 +465,33 @@ def generate_html_dashboard(
       </div>
     </div>
 
-    <!-- SIDE-BY-SIDE WINNING VS LOSING TEARSHEET -->
+    <!-- 3. Core Equity & Drawdown Curves (Top Visual Hero) -->
+    <div class="grid-2col">
+      <div class="card">
+        <h2>
+          <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background-color:#06b6d4;"></span>
+          Cumulative Mark-to-Market Equity Curve
+        </h2>
+        <p class="subtitle">Baseline: $50,000 Initial Capital across full backtest horizon.</p>
+        <div id="equityChart" class="chart-container" style="height: 360px;"></div>
+      </div>
+      <div class="card">
+        <h2>
+          <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background-color:#f43f5e;"></span>
+          Underwater Equity Drawdown ($)
+        </h2>
+        <p class="subtitle">Peak-to-trough mark-to-market drawdown trajectory.</p>
+        <div id="drawdownChart" class="chart-container" style="height: 360px;"></div>
+      </div>
+    </div>
+
+    <!-- 4. Side-by-Side Winning vs. Losing Trades Comparative Audit -->
     <div class="card">
       <h2>
-        <span style="display:inline-block; width:10px; height:10px; border-radius:50%; background-color:#38bdf8;"></span>
+        <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background-color:#38bdf8;"></span>
         Winning Trades vs. Losing Trades Comparative Audit
       </h2>
-      <p class="subtitle" style="margin-bottom: 0.75rem;">
+      <p class="subtitle" style="margin-bottom: 0.5rem;">
         Mathematical breakdown comparing winning trades against losing trades across sizing, hold durations, and excursion dynamics.
       </p>
       <div class="table-container">
@@ -561,76 +576,37 @@ def generate_html_dashboard(
       </div>
     </div>
 
-    <!-- MAE vs MFE SCATTER PLOT -->
+    <!-- 5. Full-Width Intra-Trade MAE vs. MFE Scatter Plot -->
     <div class="card">
-      <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:0.5rem; margin-bottom: 0.75rem;">
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:0.5rem;">
         <div>
-          <h2>Intra-Trade MAE vs. MFE Excursion Scatter (in R-Multiples)</h2>
+          <h2>
+            <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background-color:#10b981;"></span>
+            Intra-Trade MAE vs. MFE Excursion Scatter (in R-Multiples)
+          </h2>
           <p class="subtitle">
             Reveals trade journey: Adverse heat taken (MAE) vs Favorable peak reached (MFE). Green = Winning Trades, Red = Losing Trades.
           </p>
         </div>
-        <div style="display:flex; gap:1rem; font-size:0.75rem;" class="font-mono">
-          <span style="display:flex; align-items:center; gap:0.35rem;"><span style="width:8px; height:8px; border-radius:50%; background:#10b981; display:inline-block;"></span> Wins ({n_wins:,})</span>
-          <span style="display:flex; align-items:center; gap:0.35rem;"><span style="width:8px; height:8px; border-radius:50%; background:#f43f5e; display:inline-block;"></span> Losses ({n_losses:,})</span>
+        <div style="display:flex; gap:1.25rem; font-size:0.75rem;" class="font-mono">
+          <span style="display:flex; align-items:center; gap:0.35rem;"><span style="width:9px; height:9px; border-radius:50%; background:#10b981; display:inline-block;"></span> Wins ({n_wins:,})</span>
+          <span style="display:flex; align-items:center; gap:0.35rem;"><span style="width:9px; height:9px; border-radius:50%; background:#f43f5e; display:inline-block;"></span> Losses ({n_losses:,})</span>
         </div>
       </div>
-      <div id="maeMfeChart" class="chart-box" style="height: 480px;">
-        <div class="chart-placeholder">Loading MAE vs MFE Interactive Scatter...</div>
-      </div>
+      <div id="maeMfeChart" class="chart-container" style="height: 480px;"></div>
     </div>
 
-    <!-- TIME PLOTS SECTION -->
+    <!-- 6. Cumulative Wins vs Losses Timeline & Trade Duration Breakdown -->
     <div class="grid-2col">
-      <!-- Hourly Performance (EST) -->
-      <div class="card">
-        <h2>Performance by Entry Hour (EST)</h2>
-        <p class="subtitle">Intraday session profile and edge distribution across 24 market hours.</p>
-        <div id="hourlyChart" class="chart-box" style="height: 350px;">
-          <div class="chart-placeholder">Loading Hourly Profile Chart...</div>
-        </div>
-        <div class="table-container" style="max-height: 200px; overflow-y: auto;">
-          <table>
-            <thead><tr><th>Hour (EST)</th><th>Trades</th><th>Net PnL</th><th>Win Rate</th></tr></thead>
-            <tbody class="font-mono">{hourly_rows}</tbody>
-          </table>
-        </div>
-      </div>
-
-      <!-- Day of Week Performance -->
-      <div class="card">
-        <h2>Performance by Day of Week</h2>
-        <p class="subtitle">Weekly cyclicality and edge stability across trading sessions.</p>
-        <div id="dowChart" class="chart-box" style="height: 350px;">
-          <div class="chart-placeholder">Loading Day of Week Chart...</div>
-        </div>
-        <div class="table-container">
-          <table>
-            <thead><tr><th>Day of Week</th><th>Trades</th><th>Net PnL</th><th>Win Rate</th></tr></thead>
-            <tbody class="font-mono">{dow_rows}</tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-
-    <!-- CUMULATIVE WINS VS LOSSES TIMELINE & DURATION BREAKDOWN -->
-    <div class="grid-2col">
-      <!-- Cumulative PnL Timeline -->
       <div class="card">
         <h2>Cumulative Timeline: Winning vs. Losing Trades PnL</h2>
-        <p class="subtitle">Visualizing the spread between gross winning power vs gross losing drag over time.</p>
-        <div id="timelineChart" class="chart-box" style="height: 350px;">
-          <div class="chart-placeholder">Loading Cumulative Timeline Chart...</div>
-        </div>
+        <p class="subtitle">Spread between gross winning power vs gross losing drag over time.</p>
+        <div id="timelineChart" class="chart-container" style="height: 360px;"></div>
       </div>
-
-      <!-- Trade Duration Buckets -->
       <div class="card">
         <h2>Trade Duration Breakdown (Hold Time)</h2>
         <p class="subtitle">Trade frequency, cumulative PnL, and win rate across trade hold buckets.</p>
-        <div id="durationChart" class="chart-box" style="height: 350px;">
-          <div class="chart-placeholder">Loading Duration Breakdown Chart...</div>
-        </div>
+        <div id="durationChart" class="chart-container" style="height: 360px;"></div>
         <div class="table-container">
           <table>
             <thead><tr><th>Hold Time</th><th>Trade Count</th><th>Net PnL</th><th>Win Rate</th></tr></thead>
@@ -640,33 +616,43 @@ def generate_html_dashboard(
       </div>
     </div>
 
-    <!-- CORE EQUITY & DRAWDOWN CHARTS -->
+    <!-- 7. Session Profiling: Hourly & Day of Week -->
     <div class="grid-2col">
       <div class="card">
-        <h2>Cumulative Mark-to-Market Equity Curve</h2>
-        <p class="subtitle">Baseline: $50,000 Initial Capital across full backtest horizon.</p>
-        <div id="equityChart" class="chart-box" style="height: 350px;">
-          <div class="chart-placeholder">Loading Equity Curve...</div>
+        <h2>Performance by Entry Hour (EST)</h2>
+        <p class="subtitle">Intraday session profile and edge distribution across 24 market hours.</p>
+        <div id="hourlyChart" class="chart-container" style="height: 360px;"></div>
+        <div class="table-container" style="max-height: 220px; overflow-y: auto;">
+          <table>
+            <thead><tr><th>Hour (EST)</th><th>Trades</th><th>Net PnL</th><th>Win Rate</th></tr></thead>
+            <tbody class="font-mono">{hourly_rows}</tbody>
+          </table>
         </div>
       </div>
       <div class="card">
-        <h2>Underwater Equity Drawdown ($)</h2>
-        <p class="subtitle">Peak-to-trough mark-to-market drawdown trajectory.</p>
-        <div id="drawdownChart" class="chart-box" style="height: 350px;">
-          <div class="chart-placeholder">Loading Drawdown Curve...</div>
+        <h2>Performance by Day of Week</h2>
+        <p class="subtitle">Weekly cyclicality and edge stability across trading sessions.</p>
+        <div id="dowChart" class="chart-container" style="height: 360px;"></div>
+        <div class="table-container">
+          <table>
+            <thead><tr><th>Day of Week</th><th>Trades</th><th>Net PnL</th><th>Win Rate</th></tr></thead>
+            <tbody class="font-mono">{dow_rows}</tbody>
+          </table>
         </div>
       </div>
     </div>
 
-    <!-- EXIT REASON BREAKDOWN -->
-    <div class="card">
-      <h2>Exit Reason Distribution & Execution Mechanics</h2>
-      <p class="subtitle">Categorization of trade exits across Stop Loss, Take Profit, and EOD Session Flattens.</p>
-      <div class="grid-2col" style="margin-top: 0.75rem;">
-        <div id="exitReasonChart" class="chart-box" style="height: 320px;">
-          <div class="chart-placeholder">Loading Exit Reason Breakdown Chart...</div>
-        </div>
-        <div class="table-container" style="display:flex; align-items:center;">
+    <!-- 8. Execution Mechanics & Exit Reason Breakdown -->
+    <div class="grid-2col">
+      <div class="card">
+        <h2>Exit Reason Share</h2>
+        <p class="subtitle">Stop Loss, Take Profit, and EOD Session Flatten execution counts.</p>
+        <div id="exitReasonChart" class="chart-container" style="height: 340px;"></div>
+      </div>
+      <div class="card">
+        <h2>Exit Reason Distribution Table</h2>
+        <p class="subtitle">Exact trade counts and portfolio proportion per exit reason.</p>
+        <div class="table-container" style="margin-top: 1.5rem;">
           <table>
             <thead><tr><th>Exit Reason</th><th>Trade Count</th><th>Share (%)</th></tr></thead>
             <tbody class="font-mono">{exit_rows}</tbody>
@@ -675,7 +661,7 @@ def generate_html_dashboard(
       </div>
     </div>
 
-    <!-- Trade Ledger Preview -->
+    <!-- 9. Recent Trade Ledger Preview -->
     <div class="card">
       <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
         <div>
@@ -711,7 +697,7 @@ def generate_html_dashboard(
 
   </div>
 
-  <!-- Asynchronous Multi-CDN Plotly Loader & Safe Execution Engine -->
+  <!-- Resilient Multi-CDN Plotly Loader & Safe Execution Engine -->
   <script>
     (function() {{
       const cdnSources = [
@@ -723,7 +709,7 @@ def generate_html_dashboard(
 
       function loadScript(idx) {{
         if (idx >= cdnSources.length) {{
-          console.warn("All Plotly CDNs failed to load. Displaying offline static tables.");
+          console.warn("All Plotly CDNs failed to load. Showing offline fallback notes.");
           showOfflineFallbacks();
           return;
         }}
@@ -740,16 +726,16 @@ def generate_html_dashboard(
 
       function showOfflineFallbacks() {{
         const chartIds = [
-          'maeMfeChart', 'hourlyChart', 'dowChart', 'timelineChart',
-          'durationChart', 'equityChart', 'drawdownChart', 'exitReasonChart'
+          'equityChart', 'drawdownChart', 'maeMfeChart', 'hourlyChart',
+          'dowChart', 'timelineChart', 'durationChart', 'exitReasonChart'
         ];
         chartIds.forEach(id => {{
           const el = document.getElementById(id);
           if (el) {{
             el.innerHTML = '<div class="chart-fallback-notice">' +
               '<p class="font-bold text-amber">📊 Chart Visualization Engine Offline</p>' +
-              '<p style="margin-top:0.25rem;">Plotly CDN could not be loaded in this browser environment. ' +
-              'All quantitative metrics, distributions, and tearsheets are fully available in the tables above and below.</p>' +
+              '<p style="margin-top:0.3rem;">Plotly CDN is unavailable in this browser session. ' +
+              'All quantitative metrics, distributions, and tearsheets are fully available in the tables.</p>' +
               '</div>';
           }}
         }});
@@ -758,8 +744,24 @@ def generate_html_dashboard(
       function safePlot(domId, data, layout, config) {{
         const el = document.getElementById(domId);
         if (!el || !window.Plotly) return;
+        // Purge any existing contents before Plotly injects DOM
+        el.innerHTML = '';
+        
+        const mergedLayout = Object.assign({{
+          autosize: true,
+          paper_bgcolor: 'transparent',
+          plot_bgcolor: 'transparent',
+          font: {{ color: '#94a3b8', family: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' }},
+        }}, layout);
+
+        const mergedConfig = Object.assign({{
+          responsive: true,
+          displayModeBar: false,
+          useResizeHandler: true
+        }}, config);
+
         try {{
-          Plotly.newPlot(domId, data, layout, config || {{ responsive: true }});
+          Plotly.newPlot(domId, data, mergedLayout, mergedConfig);
         }} catch (err) {{
           console.error("Plotly render error on " + domId, err);
           el.innerHTML = '<div class="chart-fallback-notice text-rose font-bold">Chart error: ' + err.message + '</div>';
@@ -770,7 +772,41 @@ def generate_html_dashboard(
         const eqDates = {json.dumps(eq_dates)};
         const eqVals = {json.dumps(eq_vals)};
 
-        // 1. MAE vs MFE Scatter Plot
+        // 1. Equity Curve Plot
+        safePlot('equityChart', [{{
+          x: eqDates,
+          y: eqVals,
+          type: 'scatter',
+          mode: 'lines',
+          name: 'Equity (USD)',
+          line: {{ color: '#06b6d4', width: 2 }},
+          fill: 'tozeroy',
+          fillcolor: 'rgba(6, 182, 212, 0.05)'
+        }}], {{
+          template: 'plotly_dark',
+          margin: {{ l: 65, r: 20, t: 15, b: 40 }},
+          xaxis: {{ showgrid: true, gridcolor: '#1e293b' }},
+          yaxis: {{ showgrid: true, gridcolor: '#1e293b', tickprefix: '$' }}
+        }});
+
+        // 2. Underwater Drawdown Plot
+        safePlot('drawdownChart', [{{
+          x: eqDates,
+          y: {json.dumps(dd_vals)},
+          type: 'scatter',
+          mode: 'lines',
+          name: 'Underwater DD ($)',
+          line: {{ color: '#f43f5e', width: 1.5 }},
+          fill: 'tozeroy',
+          fillcolor: 'rgba(244, 63, 94, 0.15)'
+        }}], {{
+          template: 'plotly_dark',
+          margin: {{ l: 65, r: 20, t: 15, b: 40 }},
+          xaxis: {{ showgrid: true, gridcolor: '#1e293b' }},
+          yaxis: {{ showgrid: true, gridcolor: '#1e293b', tickprefix: '$' }}
+        }});
+
+        // 3. MAE vs MFE Scatter Plot
         safePlot('maeMfeChart', [
           {{
             x: {json.dumps(loss_mae_r)},
@@ -792,9 +828,7 @@ def generate_html_dashboard(
           }}
         ], {{
           template: 'plotly_dark',
-          paper_bgcolor: 'transparent',
-          plot_bgcolor: 'transparent',
-          margin: {{ l: 60, r: 30, t: 30, b: 50 }},
+          margin: {{ l: 65, r: 30, t: 25, b: 50 }},
           xaxis: {{ title: 'Maximum Adverse Excursion (MAE in R-Multiples)', showgrid: true, gridcolor: '#1e293b' }},
           yaxis: {{ title: 'Maximum Favorable Excursion (MFE in R-Multiples)', showgrid: true, gridcolor: '#1e293b' }},
           shapes: [
@@ -802,71 +836,9 @@ def generate_html_dashboard(
             {{ type: 'line', x0: 0, x1: 2.0, y0: 2.0, y1: 2.0, line: {{ color: '#10b981', dash: 'dash', width: 1.5 }} }}
           ],
           annotations: [
-            {{ x: 1.05, y: 0.2, xref: 'x', yref: 'y', text: '1.0R Initial SL', showarrow: false, font: {{ color: '#ef4444', size: 10 }} }},
-            {{ x: 0.1, y: 2.08, xref: 'x', yref: 'y', text: '2.0R Target TP', showarrow: false, font: {{ color: '#10b981', size: 10 }} }}
+            {{ x: 1.05, y: 0.2, xref: 'x', yref: 'y', text: '1.0R Initial SL', showarrow: false, font: {{ color: '#ef4444', size: 11 }} }},
+            {{ x: 0.1, y: 2.12, xref: 'x', yref: 'y', text: '2.0R Target TP', showarrow: false, font: {{ color: '#10b981', size: 11 }} }}
           ]
-        }});
-
-        // 2. Hourly Performance Chart (EST)
-        safePlot('hourlyChart', [
-          {{
-            x: {json.dumps(hours_labels)},
-            y: {json.dumps(hourly_pnl)},
-            type: 'bar',
-            name: 'Net PnL ($)',
-            marker: {{
-              color: {json.dumps(hourly_pnl)}.map(v => v >= 0 ? '#10b981' : '#f43f5e')
-            }}
-          }},
-          {{
-            x: {json.dumps(hours_labels)},
-            y: {json.dumps(hourly_wr)},
-            type: 'scatter',
-            mode: 'lines+markers',
-            name: 'Win Rate (%)',
-            yaxis: 'y2',
-            line: {{ color: '#38bdf8', width: 2 }}
-          }}
-        ], {{
-          template: 'plotly_dark',
-          paper_bgcolor: 'transparent',
-          plot_bgcolor: 'transparent',
-          margin: {{ l: 60, r: 50, t: 20, b: 40 }},
-          xaxis: {{ title: 'Entry Hour (EST)', showgrid: false }},
-          yaxis: {{ title: 'Net PnL ($)', showgrid: true, gridcolor: '#1e293b' }},
-          yaxis2: {{ title: 'Win Rate (%)', overlaying: 'y', side: 'right', range: [0, 60], showgrid: false }},
-          legend: {{ orientation: 'h', y: -0.25 }}
-        }});
-
-        // 3. Day of Week Performance Chart
-        safePlot('dowChart', [
-          {{
-            x: {json.dumps(dow_labels)},
-            y: {json.dumps(dow_pnl)},
-            type: 'bar',
-            name: 'Net PnL ($)',
-            marker: {{
-              color: {json.dumps(dow_pnl)}.map(v => v >= 0 ? '#10b981' : '#f43f5e')
-            }}
-          }},
-          {{
-            x: {json.dumps(dow_labels)},
-            y: {json.dumps(dow_wr)},
-            type: 'scatter',
-            mode: 'lines+markers',
-            name: 'Win Rate (%)',
-            yaxis: 'y2',
-            line: {{ color: '#fbbf24', width: 2 }}
-          }}
-        ], {{
-          template: 'plotly_dark',
-          paper_bgcolor: 'transparent',
-          plot_bgcolor: 'transparent',
-          margin: {{ l: 60, r: 50, t: 20, b: 40 }},
-          xaxis: {{ showgrid: false }},
-          yaxis: {{ title: 'Net PnL ($)', showgrid: true, gridcolor: '#1e293b' }},
-          yaxis2: {{ title: 'Win Rate (%)', overlaying: 'y', side: 'right', range: [0, 50], showgrid: false }},
-          legend: {{ orientation: 'h', y: -0.25 }}
         }});
 
         // 4. Cumulative Wins vs Losses Timeline
@@ -889,12 +861,10 @@ def generate_html_dashboard(
           }}
         ], {{
           template: 'plotly_dark',
-          paper_bgcolor: 'transparent',
-          plot_bgcolor: 'transparent',
-          margin: {{ l: 60, r: 20, t: 20, b: 40 }},
+          margin: {{ l: 65, r: 20, t: 20, b: 40 }},
           xaxis: {{ showgrid: true, gridcolor: '#1e293b' }},
           yaxis: {{ title: 'Cumulative PnL ($)', showgrid: true, gridcolor: '#1e293b', tickprefix: '$' }},
-          legend: {{ orientation: 'h', y: -0.25 }}
+          legend: {{ orientation: 'h', y: -0.22 }}
         }});
 
         // 5. Trade Duration Analysis
@@ -917,51 +887,69 @@ def generate_html_dashboard(
           }}
         ], {{
           template: 'plotly_dark',
-          paper_bgcolor: 'transparent',
-          plot_bgcolor: 'transparent',
-          margin: {{ l: 60, r: 50, t: 20, b: 40 }},
+          margin: {{ l: 65, r: 50, t: 20, b: 40 }},
           xaxis: {{ title: 'Hold Time Duration', showgrid: false }},
           yaxis: {{ title: 'Trades Count', showgrid: true, gridcolor: '#1e293b' }},
           yaxis2: {{ title: 'Win Rate (%)', overlaying: 'y', side: 'right', range: [0, 50], showgrid: false }},
-          legend: {{ orientation: 'h', y: -0.25 }}
+          legend: {{ orientation: 'h', y: -0.22 }}
         }});
 
-        // 6. Underwater Drawdown Plot
-        safePlot('drawdownChart', [{{
-          x: eqDates,
-          y: {json.dumps(dd_vals)},
-          type: 'scatter',
-          mode: 'lines',
-          name: 'Underwater DD ($)',
-          line: {{ color: '#f43f5e', width: 1.5 }},
-          fill: 'tozeroy',
-          fillcolor: 'rgba(244, 63, 94, 0.15)'
-        }}], {{
+        // 6. Hourly Performance Chart (EST)
+        safePlot('hourlyChart', [
+          {{
+            x: {json.dumps(hours_labels)},
+            y: {json.dumps(hourly_pnl)},
+            type: 'bar',
+            name: 'Net PnL ($)',
+            marker: {{
+              color: {json.dumps(hourly_pnl)}.map(v => v >= 0 ? '#10b981' : '#f43f5e')
+            }}
+          }},
+          {{
+            x: {json.dumps(hours_labels)},
+            y: {json.dumps(hourly_wr)},
+            type: 'scatter',
+            mode: 'lines+markers',
+            name: 'Win Rate (%)',
+            yaxis: 'y2',
+            line: {{ color: '#38bdf8', width: 2 }}
+          }}
+        ], {{
           template: 'plotly_dark',
-          paper_bgcolor: 'transparent',
-          plot_bgcolor: 'transparent',
-          margin: {{ l: 60, r: 20, t: 10, b: 40 }},
-          xaxis: {{ showgrid: true, gridcolor: '#1e293b' }},
-          yaxis: {{ showgrid: true, gridcolor: '#1e293b', tickprefix: '$' }}
+          margin: {{ l: 65, r: 50, t: 20, b: 40 }},
+          xaxis: {{ title: 'Entry Hour (EST)', showgrid: false }},
+          yaxis: {{ title: 'Net PnL ($)', showgrid: true, gridcolor: '#1e293b' }},
+          yaxis2: {{ title: 'Win Rate (%)', overlaying: 'y', side: 'right', range: [0, 60], showgrid: false }},
+          legend: {{ orientation: 'h', y: -0.22 }}
         }});
 
-        // 7. Equity Curve Plot
-        safePlot('equityChart', [{{
-          x: eqDates,
-          y: eqVals,
-          type: 'scatter',
-          mode: 'lines',
-          name: 'Equity (USD)',
-          line: {{ color: '#06b6d4', width: 2 }},
-          fill: 'tozeroy',
-          fillcolor: 'rgba(6, 182, 212, 0.05)'
-        }}], {{
+        // 7. Day of Week Performance Chart
+        safePlot('dowChart', [
+          {{
+            x: {json.dumps(dow_labels)},
+            y: {json.dumps(dow_pnl)},
+            type: 'bar',
+            name: 'Net PnL ($)',
+            marker: {{
+              color: {json.dumps(dow_pnl)}.map(v => v >= 0 ? '#10b981' : '#f43f5e')
+            }}
+          }},
+          {{
+            x: {json.dumps(dow_labels)},
+            y: {json.dumps(dow_wr)},
+            type: 'scatter',
+            mode: 'lines+markers',
+            name: 'Win Rate (%)',
+            yaxis: 'y2',
+            line: {{ color: '#fbbf24', width: 2 }}
+          }}
+        ], {{
           template: 'plotly_dark',
-          paper_bgcolor: 'transparent',
-          plot_bgcolor: 'transparent',
-          margin: {{ l: 60, r: 20, t: 10, b: 40 }},
-          xaxis: {{ showgrid: true, gridcolor: '#1e293b' }},
-          yaxis: {{ showgrid: true, gridcolor: '#1e293b', tickprefix: '$' }}
+          margin: {{ l: 65, r: 50, t: 20, b: 40 }},
+          xaxis: {{ showgrid: false }},
+          yaxis: {{ title: 'Net PnL ($)', showgrid: true, gridcolor: '#1e293b' }},
+          yaxis2: {{ title: 'Win Rate (%)', overlaying: 'y', side: 'right', range: [0, 50], showgrid: false }},
+          legend: {{ orientation: 'h', y: -0.22 }}
         }});
 
         // 8. Exit Reason Pie Chart
@@ -973,14 +961,23 @@ def generate_html_dashboard(
           marker: {{ colors: ['#10b981', '#ef4444', '#f59e0b', '#6366f1'] }}
         }}], {{
           template: 'plotly_dark',
-          paper_bgcolor: 'transparent',
-          plot_bgcolor: 'transparent',
-          margin: {{ l: 20, r: 20, t: 10, b: 20 }},
+          margin: {{ l: 20, r: 20, t: 15, b: 20 }},
           legend: {{ orientation: 'h', y: -0.1 }}
+        }});
+
+        // Window resize observer
+        window.addEventListener('resize', () => {{
+          [
+            'equityChart', 'drawdownChart', 'maeMfeChart', 'hourlyChart',
+            'dowChart', 'timelineChart', 'durationChart', 'exitReasonChart'
+          ].forEach(id => {{
+            const el = document.getElementById(id);
+            if (el && window.Plotly) Plotly.Plots.resize(el);
+          }});
         }});
       }}
 
-      // Start asynchronous loader
+      // Initialize loader
       loadScript(0);
     }})();
   </script>

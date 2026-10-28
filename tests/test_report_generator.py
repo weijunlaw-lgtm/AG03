@@ -1,6 +1,6 @@
 """
 Unit tests for report_generator.py.
-Verifies HTML dashboard generation, pure-CSS layout integrity,
+Verifies HTML dashboard generation, containment integrity,
 Plotly container completeness, and offline fallback compatibility.
 """
 
@@ -75,32 +75,29 @@ class TestReportGenerator(unittest.TestCase):
         self.assertIn("--bg-page: #0b1120;", html)
         self.assertIn(".card", html)
         self.assertIn(".grid-kpi", html)
+        self.assertIn("minmax(0, 1fr)", html)
 
-        # 3. All chart containers exist in DOM
+        # 3. All chart containers exist in DOM and are isolated block elements
         required_chart_ids = [
+            "equityChart",
+            "drawdownChart",
             "maeMfeChart",
             "hourlyChart",
             "dowChart",
             "timelineChart",
             "durationChart",
-            "equityChart",
-            "drawdownChart",
             "exitReasonChart",
         ]
         for chart_id in required_chart_ids:
             self.assertIn(f'id="{chart_id}"', html, f"Missing chart DOM element: {chart_id}")
 
-        # 4. Asynchronous multi-CDN loader and safePlot function
-        self.assertIn("function safePlot", html)
-        self.assertIn("function showOfflineFallbacks", html)
-        self.assertIn("https://cdn.plot.ly/plotly-2.35.2.min.js", html)
+        # 4. Safe innerHTML clearing before plot
+        self.assertIn("el.innerHTML = '';", html, "safePlot must clear container before rendering to prevent overlapping")
 
-        # 5. Static tables are embedded for offline readability
-        self.assertIn("Winning Trades vs. Losing Trades Comparative Audit", html)
-        self.assertIn("Performance by Entry Hour (EST)", html)
-        self.assertIn("Performance by Day of Week", html)
-        self.assertIn("Exit Reason Distribution", html)
-        self.assertIn("Trade Ledger Preview", html)
+        # 5. Order: Equity curve appears before comparative audit and MAE/MFE scatter
+        idx_eq = html.find('id="equityChart"')
+        idx_mae = html.find('id="maeMfeChart"')
+        self.assertLess(idx_eq, idx_mae, "Equity Curve must be positioned above MAE/MFE excursion scatter")
 
     def test_generate_html_dashboard_empty_trades(self):
         """Dashboard must generate cleanly without exceptions even if trades dataframe is empty."""

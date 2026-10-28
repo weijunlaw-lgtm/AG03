@@ -1,7 +1,7 @@
 """
 Automated Report and Dashboard Generator for NQ EBP Strategy Backtests.
-Produces interactive HTML dashboards (Tailwind + Plotly) and summary reports
-featuring comprehensive Win vs Loss analytics, MAE/MFE excursions, and time-based plots.
+Produces interactive, standalone HTML dashboards featuring comprehensive
+Win vs Loss analytics, MAE/MFE excursions, time-based plots, and robust offline styling.
 """
 
 from typing import Any, Dict
@@ -19,13 +19,17 @@ def generate_html_dashboard(
 ) -> str:
     """
     Generate a self-contained, publication-grade dark-themed HTML report.
-    Integrates Tailwind CSS and Plotly.js for interactive visualizations:
+    Uses pure embedded CSS (zero external CSS framework dependency) to ensure
+    immediate rendering in all environments (offline, airgapped, file://, CDN-blocked).
+    Integrates an asynchronous multi-CDN fallback Plotly loader with graceful degradation:
     - Intra-Trade MAE vs MFE Scatter Plot (R-multiples)
     - Time Plot 1: Performance by Hour of Day (EST)
     - Time Plot 2: Performance by Day of Week
     - Time Plot 3: Cumulative Winning vs Losing Trades PnL Timeline
     - Hold Time Duration Analysis
-    - Detailed Winning vs Losing Trades Comparative Tearsheet
+    - Exit Reason Distribution (Pie & Breakdown Table)
+    - Core MTM Equity Curve and Underwater Drawdown
+    - Comprehensive Side-by-Side Win vs Loss Tearsheet
     """
     # Downsample equity series for smooth web charting
     if len(equity_series) > 10000:
@@ -105,6 +109,7 @@ def generate_html_dashboard(
         hours_labels = [f"{h:02d}:00" for h in hourly["entry_hour"]]
         hourly_pnl = [round(float(v), 2) for v in hourly["pnl"]]
         hourly_wr = [round(float(v), 1) for v in hourly["win_rate"]]
+        hourly_trades = [int(v) for v in hourly["trades"]]
 
         # Day of Week Performance
         trades_df_copy["dow"] = t_entry.dt.day_name()
@@ -118,6 +123,7 @@ def generate_html_dashboard(
         dow_labels = list(dow_grouped["dow"])
         dow_pnl = [round(float(v), 2) for v in dow_grouped["pnl"]]
         dow_wr = [round(float(v), 1) for v in dow_grouped["win_rate"]]
+        dow_trades = [int(v) for v in dow_grouped["trades"]]
 
         # Cumulative PnL Timeline for Wins vs Losses
         trades_sorted = trades_df.sort_values("exit_time").copy()
@@ -160,189 +166,395 @@ def generate_html_dashboard(
         ).reset_index()
         dur_labels = list(dur_grp["dur_bin"])
         dur_counts = [int(v) for v in dur_grp["trades"]]
+        dur_pnl = [round(float(v), 2) for v in dur_grp["pnl"]]
         dur_wr = [round(float(v), 1) for v in dur_grp["win_rate"]]
 
     else:
-        hours_labels, hourly_pnl, hourly_wr = [], [], []
-        dow_labels, dow_pnl, dow_wr = [], [], []
+        hours_labels, hourly_pnl, hourly_wr, hourly_trades = [], [], [], []
+        dow_labels, dow_pnl, dow_wr, dow_trades = [], [], [], []
         tl_dates, tl_win_cum, tl_loss_cum = [], [], []
         win_mae_r, win_mfe_r, win_text = [], [], []
         loss_mae_r, loss_mfe_r, loss_text = [], [], []
-        dur_labels, dur_counts, dur_wr = [], [], []
+        dur_labels, dur_counts, dur_pnl, dur_wr = [], [], [], []
 
     # Exit reason breakdown
     exit_counts = trades_df["exit_reason"].value_counts().to_dict() if not trades_df.empty else {}
     exit_labels = list(exit_counts.keys())
-    exit_values = list(exit_counts.values())
+    exit_values = [int(v) for v in exit_counts.values()]
 
     # Sample trades for preview
     sample_trades = trades_df.head(50).to_dict(orient="records") if not trades_df.empty else []
 
-    # Generate Full HTML
+    # Date range string
+    horizon_str = (
+        f"{chart_equity.index[0].strftime('%Y-%m-%d')} → {chart_equity.index[-1].strftime('%Y-%m-%d')}"
+        if len(chart_equity) > 0
+        else "N/A"
+    )
+
+    # Pre-render static HTML tables so the report displays instantly even without JavaScript
+    hourly_rows = "".join([
+        f"<tr><td>{hl}</td><td>{trades:,}</td><td class='{('text-emerald' if pnl >= 0 else 'text-rose')}'>${pnl:+,.2f}</td><td>{wr:.1f}%</td></tr>"
+        for hl, trades, pnl, wr in zip(hours_labels, hourly_trades, hourly_pnl, hourly_wr)
+        if trades > 0
+    ])
+
+    dow_rows = "".join([
+        f"<tr><td class='font-bold'>{dl}</td><td>{dt:,}</td><td class='{('text-emerald' if dp >= 0 else 'text-rose')}'>${dp:+,.2f}</td><td>{dwr:.1f}%</td></tr>"
+        for dl, dt, dp, dwr in zip(dow_labels, dow_trades, dow_pnl, dow_wr)
+    ])
+
+    dur_rows = "".join([
+        f"<tr><td class='font-bold'>{dl}</td><td>{dc:,}</td><td class='{('text-emerald' if dp >= 0 else 'text-rose')}'>${dp:+,.2f}</td><td>{dw:.1f}%</td></tr>"
+        for dl, dc, dp, dw in zip(dur_labels, dur_counts, dur_pnl, dur_wr)
+    ])
+
+    exit_rows = "".join([
+        f"<tr><td class='font-bold'>{el}</td><td>{ev:,}</td><td>{(ev / max(1, total_trades) * 100):.1f}%</td></tr>"
+        for el, ev in zip(exit_labels, exit_values)
+    ])
+
+    trade_preview_rows = "".join([
+        f"""<tr>
+          <td class="text-muted">{t.get("trade_id", "")}</td>
+          <td class="font-bold {('text-emerald' if t.get('direction') == 'LONG' else 'text-rose')}">{t.get("direction", "")}</td>
+          <td>{str(t.get("entry_time", ""))[:19]}</td>
+          <td>{t.get("hold_time_minutes", "")}m</td>
+          <td>{t.get("contracts", "")}</td>
+          <td>{t.get("entry_price", 0):.2f}</td>
+          <td>{t.get("exit_price", 0):.2f}</td>
+          <td class="text-amber">{t.get("mae_r", 0):.2f}R</td>
+          <td class="text-cyan">{t.get("mfe_r", 0):.2f}R</td>
+          <td class="{('text-emerald' if t.get('gross_pts', 0) > 0 else 'text-rose')}">{t.get("gross_pts", 0):+.2f}</td>
+          <td class="font-bold {('text-emerald' if t.get('net_pnl_usd', 0) > 0 else 'text-rose')}">${t.get("net_pnl_usd", 0):+,.2f}</td>
+          <td class="text-muted">{t.get("exit_reason", "")}</td>
+        </tr>"""
+        for t in sample_trades
+    ])
+
+    # Self-contained HTML with embedded styles (Zero external CSS dependency)
     html_content = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{title}</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
   <style>
-    body {{ background-color: #0b1120; color: #f8fafc; font-family: system-ui, -apple-system, sans-serif; }}
-    .card {{ background-color: #0f172a; border: 1px solid #1e293b; border-radius: 1rem; }}
-    .card-header {{ border-bottom: 1px solid #1e293b; padding: 1rem 1.5rem; }}
+    :root {{
+      --bg-page: #0b1120;
+      --bg-card: #0f172a;
+      --bg-card-sub: #162036;
+      --bg-table-head: #090e1a;
+      --border-color: #1e293b;
+      --border-highlight: #334155;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --text-dim: #64748b;
+      --accent-emerald: #10b981;
+      --accent-rose: #f43f5e;
+      --accent-cyan: #06b6d4;
+      --accent-amber: #f59e0b;
+      --accent-indigo: #818cf8;
+    }}
+    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    body {{
+      background-color: var(--bg-page);
+      color: var(--text-main);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.5;
+      padding: 1.25rem;
+    }}
+    .max-container {{ max-width: 1380px; margin: 0 auto; display: flex; flex-direction: column; gap: 1.5rem; }}
+    
+    /* Typography & Utility */
+    h1 {{ font-size: 1.75rem; font-weight: 800; letter-spacing: -0.025em; color: #fff; }}
+    h2 {{ font-size: 1.125rem; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 0.5rem; }}
+    p.subtitle {{ font-size: 0.875rem; color: var(--text-muted); margin-top: 0.25rem; }}
+    .font-mono {{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }}
+    .font-bold {{ font-weight: 700; }}
+    .text-emerald {{ color: var(--accent-emerald) !important; }}
+    .text-rose {{ color: var(--accent-rose) !important; }}
+    .text-cyan {{ color: var(--accent-cyan) !important; }}
+    .text-amber {{ color: var(--accent-amber) !important; }}
+    .text-indigo {{ color: var(--accent-indigo) !important; }}
+    .text-muted {{ color: var(--text-muted) !important; }}
+    .text-dim {{ color: var(--text-dim) !important; }}
+    .text-right {{ text-align: right; }}
+
+    /* Cards */
+    .card {{
+      background-color: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 0.875rem;
+      padding: 1.25rem;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.4);
+    }}
+    .card-banner {{
+      background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #0f172a 100%);
+      border: 1px solid #3730a3;
+      padding: 1.5rem;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 1rem;
+    }}
+
+    /* Badges */
+    .badge-group {{ display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.5rem; }}
+    .badge {{
+      display: inline-flex;
+      align-items: center;
+      padding: 0.25rem 0.65rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      border: 1px solid transparent;
+    }}
+    .badge-emerald {{ background-color: rgba(16, 185, 129, 0.15); color: #34d399; border-color: rgba(16, 185, 129, 0.3); }}
+    .badge-cyan {{ background-color: rgba(6, 182, 212, 0.15); color: #38bdf8; border-color: rgba(6, 182, 212, 0.3); }}
+    .badge-indigo {{ background-color: rgba(99, 102, 241, 0.15); color: #a5b4fc; border-color: rgba(99, 102, 241, 0.3); }}
+
+    /* Grid Layouts */
+    .grid-kpi {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+      gap: 1rem;
+    }}
+    .grid-2col {{
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+    }}
+    @media (max-width: 960px) {{
+      .grid-2col {{ grid-template-columns: 1fr; }}
+    }}
+
+    /* Stat Cards */
+    .stat-title {{ font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }}
+    .stat-value {{ font-size: 1.625rem; font-weight: 800; margin-top: 0.25rem; }}
+    .stat-meta {{ font-size: 0.75rem; color: var(--text-dim); margin-top: 0.25rem; }}
+
+    /* Tables */
+    .table-container {{
+      width: 100%;
+      overflow-x: auto;
+      border-radius: 0.5rem;
+      margin-top: 0.75rem;
+    }}
+    table {{
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.8125rem;
+      text-align: left;
+    }}
+    th {{
+      background-color: var(--bg-table-head);
+      color: var(--text-muted);
+      text-transform: uppercase;
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      padding: 0.65rem 0.85rem;
+      border-bottom: 1px solid var(--border-color);
+      white-space: nowrap;
+    }}
+    td {{
+      padding: 0.6rem 0.85rem;
+      border-bottom: 1px solid var(--border-color);
+      white-space: nowrap;
+    }}
+    tr:hover td {{ background-color: rgba(30, 41, 59, 0.5); }}
+    .table-ledger {{ max-height: 420px; overflow-y: auto; display: block; }}
+    .table-ledger thead {{ position: sticky; top: 0; z-index: 10; }}
+
+    /* Chart Containers */
+    .chart-box {{
+      width: 100%;
+      position: relative;
+      border-radius: 0.5rem;
+      background: var(--bg-card);
+      min-height: 350px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }}
+    .chart-placeholder {{
+      color: var(--text-dim);
+      font-size: 0.8125rem;
+      text-align: center;
+      padding: 1.5rem;
+    }}
+    .chart-fallback-notice {{
+      background: rgba(15, 23, 42, 0.8);
+      border: 1px dashed var(--border-highlight);
+      border-radius: 0.5rem;
+      padding: 1rem;
+      margin-top: 0.5rem;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }}
+
+    /* Buttons */
+    .btn {{
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.45rem 0.9rem;
+      border-radius: 0.5rem;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-decoration: none;
+      cursor: pointer;
+      border: none;
+      transition: background 0.15s ease;
+    }}
+    .btn-cyan {{ background-color: #0284c7; color: #fff; }}
+    .btn-cyan:hover {{ background-color: #0369a1; }}
   </style>
 </head>
-<body class="antialiased p-4 md:p-8">
-  <div class="max-w-7xl mx-auto space-y-6">
+<body>
+  <div class="max-container">
 
-    <!-- Header Banner -->
-    <div class="card p-6 shadow-2xl relative overflow-hidden bg-gradient-to-r from-slate-900 via-indigo-950/40 to-slate-900 border-indigo-900/40">
-      <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div>
-          <div class="flex items-center gap-2 mb-2">
-            <span class="px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-              Winning vs. Losing Deep Analytics
-            </span>
-            <span class="px-2.5 py-1 rounded-full text-xs font-semibold bg-cyan-500/20 text-cyan-400 border border-cyan-500/30">
-              MAE & MFE Excursions
-            </span>
-            <span class="px-2.5 py-1 rounded-full text-xs font-semibold bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">
-              Time & Hourly Profiling
-            </span>
-          </div>
-          <h1 class="text-2xl md:text-3xl font-extrabold tracking-tight text-white">
-            {title}
-          </h1>
-          <p class="text-sm text-slate-400 mt-1">
-            Zero Lookahead Bias • Multi-Slot Numba Execution Kernel • Dynamic 50-Contract Cap • Realistic Friction
-          </p>
+    <!-- Executive Header Banner -->
+    <div class="card card-banner">
+      <div>
+        <div class="badge-group">
+          <span class="badge badge-emerald">Institutional Quant Suite</span>
+          <span class="badge badge-cyan">Intra-Trade MAE & MFE Excursions</span>
+          <span class="badge badge-indigo">Time & Session Profiling</span>
         </div>
-        <div class="text-right">
-          <div class="text-xs uppercase tracking-wider text-slate-400">Total Backtest Horizon</div>
-          <div class="text-lg font-bold text-cyan-400 mt-0.5">
-            {chart_equity.index[0].strftime('%Y-%m-%d') if len(chart_equity) > 0 else 'N/A'} → {chart_equity.index[-1].strftime('%Y-%m-%d') if len(chart_equity) > 0 else 'N/A'}
-          </div>
-        </div>
+        <h1>{title}</h1>
+        <p class="subtitle">
+          Zero Lookahead Bias • Multi-Slot Numba Execution Kernel • Dynamic 50-Contract Cap • Realistic Slippage & Commissions
+        </p>
+      </div>
+      <div class="text-right">
+        <div class="stat-title">Backtest Horizon</div>
+        <div class="stat-value text-cyan" style="font-size: 1.25rem;">{horizon_str}</div>
+        <div class="stat-meta">Micro E-mini Nasdaq-100 (MNQ 5-Minute)</div>
       </div>
     </div>
 
-    <!-- Stat Grid -->
-    <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
-      <div class="card p-4">
-        <div class="text-xs text-slate-400 uppercase tracking-wider">Total Trades</div>
-        <div class="text-2xl font-bold text-white mt-1">{total_trades:,}</div>
-        <div class="text-xs text-slate-500 mt-1">{metrics.get('avg_trades_per_day', 0):.1f} trades / active day</div>
+    <!-- KPI Metric Cards Grid -->
+    <div class="grid-kpi">
+      <div class="card">
+        <div class="stat-title">Total Trades</div>
+        <div class="stat-value">{total_trades:,}</div>
+        <div class="stat-meta">{metrics.get('avg_trades_per_day', 0):.1f} trades / active day</div>
       </div>
-      <div class="card p-4">
-        <div class="text-xs text-slate-400 uppercase tracking-wider">Win Rate</div>
-        <div class="text-2xl font-bold text-amber-400 mt-1">{metrics.get('overall_win_rate_pct', 0):.2f}%</div>
-        <div class="text-xs text-slate-500 mt-1">{n_wins:,} Wins / {n_losses:,} Losses</div>
+      <div class="card">
+        <div class="stat-title">Win Rate</div>
+        <div class="stat-value text-amber">{metrics.get('overall_win_rate_pct', 0):.2f}%</div>
+        <div class="stat-meta">{n_wins:,} Wins / {n_losses:,} Losses</div>
       </div>
-      <div class="card p-4">
-        <div class="text-xs text-slate-400 uppercase tracking-wider">Profit Factor</div>
-        <div class="text-2xl font-bold {'text-emerald-400' if metrics.get('profit_factor', 0) >= 1.0 else 'text-rose-400'} mt-1">{metrics.get('profit_factor', 0):.4f}</div>
-        <div class="text-xs text-slate-500 mt-1">Payoff Ratio: {win_loss_payoff:.2f}x</div>
+      <div class="card">
+        <div class="stat-title">Profit Factor</div>
+        <div class="stat-value {'text-emerald' if metrics.get('profit_factor', 0) >= 1.0 else 'text-rose'}">{metrics.get('profit_factor', 0):.4f}</div>
+        <div class="stat-meta">Payoff Ratio: {win_loss_payoff:.2f}x</div>
       </div>
-      <div class="card p-4">
-        <div class="text-xs text-slate-400 uppercase tracking-wider">Total Net Profit</div>
-        <div class="text-2xl font-bold {'text-emerald-400' if metrics.get('total_net_profit', 0) >= 0 else 'text-rose-400'} mt-1">${metrics.get('total_net_profit', 0):,.2f}</div>
-        <div class="text-xs text-slate-500 mt-1">Comm: ${metrics.get('total_commissions', 0):,.2f}</div>
+      <div class="card">
+        <div class="stat-title">Total Net Profit</div>
+        <div class="stat-value {'text-emerald' if metrics.get('total_net_profit', 0) >= 0 else 'text-rose'}">${metrics.get('total_net_profit', 0):,.2f}</div>
+        <div class="stat-meta">Friction: ${metrics.get('total_commissions', 0):,.2f}</div>
       </div>
-      <div class="card p-4">
-        <div class="text-xs text-slate-400 uppercase tracking-wider">Max Drawdown</div>
-        <div class="text-2xl font-bold text-rose-400 mt-1">${metrics.get('max_intraday_drawdown', 0):,.2f}</div>
-        <div class="text-xs text-slate-500 mt-1">EOD DD: ${metrics.get('max_eod_drawdown', 0):,.2f}</div>
+      <div class="card">
+        <div class="stat-title">Max Drawdown</div>
+        <div class="stat-value text-rose">${metrics.get('max_intraday_drawdown', 0):,.2f}</div>
+        <div class="stat-meta">EOD DD: ${metrics.get('max_eod_drawdown', 0):,.2f}</div>
       </div>
-      <div class="card p-4">
-        <div class="text-xs text-slate-400 uppercase tracking-wider">Contract Cap Skips</div>
-        <div class="text-2xl font-bold text-indigo-400 mt-1">{metrics.get('skipped_by_contract_cap', 0):,}</div>
-        <div class="text-xs text-slate-500 mt-1">Peak: {metrics.get('peak_concurrent_contracts', 0)} / 50 contracts</div>
+      <div class="card">
+        <div class="stat-title">Contract Cap Skips</div>
+        <div class="stat-value text-indigo">{metrics.get('skipped_by_contract_cap', 0):,}</div>
+        <div class="stat-meta">Peak: {metrics.get('peak_concurrent_contracts', 0)} / 50 contracts</div>
       </div>
     </div>
 
     <!-- SIDE-BY-SIDE WINNING VS LOSING TEARSHEET -->
-    <div class="card p-6">
-      <h2 class="text-lg font-bold text-white mb-4 flex items-center gap-2">
-        <span class="w-3 h-3 rounded-full bg-cyan-400"></span>
+    <div class="card">
+      <h2>
+        <span style="display:inline-block; width:10px; height:10px; border-radius:50%; background-color:#38bdf8;"></span>
         Winning Trades vs. Losing Trades Comparative Audit
       </h2>
-      <div class="overflow-x-auto">
-        <table class="w-full text-sm text-left text-slate-300">
-          <thead class="text-xs text-slate-400 uppercase bg-slate-950/80 border-b border-slate-800">
+      <p class="subtitle" style="margin-bottom: 0.75rem;">
+        Mathematical breakdown comparing winning trades against losing trades across sizing, hold durations, and excursion dynamics.
+      </p>
+      <div class="table-container">
+        <table>
+          <thead>
             <tr>
-              <th class="py-3 px-4">Performance Metric</th>
-              <th class="py-3 px-4 text-emerald-400 font-bold">Winning Trades ({win_stats['pct']:.1f}%)</th>
-              <th class="py-3 px-4 text-rose-400 font-bold">Losing Trades ({loss_stats['pct']:.1f}%)</th>
-              <th class="py-3 px-4 text-cyan-400 font-bold">Delta / Comparison</th>
+              <th>Performance Metric</th>
+              <th class="text-emerald">Winning Trades ({win_stats['pct']:.1f}%)</th>
+              <th class="text-rose">Losing Trades ({loss_stats['pct']:.1f}%)</th>
+              <th class="text-cyan">Delta / Comparison</th>
             </tr>
           </thead>
-          <tbody class="divide-y divide-slate-800 font-mono text-xs md:text-sm">
-            <tr class="hover:bg-slate-800/30">
-              <td class="py-2.5 px-4 font-sans font-medium text-slate-300">Total Trade Count</td>
-              <td class="py-2.5 px-4 text-emerald-400 font-bold">{win_stats['count']:,}</td>
-              <td class="py-2.5 px-4 text-rose-400 font-bold">{loss_stats['count']:,}</td>
-              <td class="py-2.5 px-4 text-slate-400">{loss_stats['count'] / max(1, win_stats['count']):.2f}x more losses than wins</td>
+          <tbody class="font-mono">
+            <tr>
+              <td style="font-family: inherit; font-weight: 600;">Total Trade Count</td>
+              <td class="text-emerald font-bold">{win_stats['count']:,}</td>
+              <td class="text-rose font-bold">{loss_stats['count']:,}</td>
+              <td class="text-muted">{loss_stats['count'] / max(1, win_stats['count']):.2f}x more losses than wins</td>
             </tr>
-            <tr class="hover:bg-slate-800/30">
-              <td class="py-2.5 px-4 font-sans font-medium text-slate-300">Cumulative Net PnL</td>
-              <td class="py-2.5 px-4 text-emerald-400 font-bold">+${win_stats['total_pnl']:,.2f}</td>
-              <td class="py-2.5 px-4 text-rose-400 font-bold">${loss_stats['total_pnl']:,.2f}</td>
-              <td class="py-2.5 px-4 text-rose-400 font-bold">Net: ${win_stats['total_pnl'] + loss_stats['total_pnl']:,.2f}</td>
+            <tr>
+              <td style="font-family: inherit; font-weight: 600;">Cumulative Net PnL</td>
+              <td class="text-emerald font-bold">+${win_stats['total_pnl']:,.2f}</td>
+              <td class="text-rose font-bold">${loss_stats['total_pnl']:,.2f}</td>
+              <td class="font-bold {'text-emerald' if (win_stats['total_pnl'] + loss_stats['total_pnl']) >= 0 else 'text-rose'}">Net: ${win_stats['total_pnl'] + loss_stats['total_pnl']:,.2f}</td>
             </tr>
-            <tr class="hover:bg-slate-800/30">
-              <td class="py-2.5 px-4 font-sans font-medium text-slate-300">Average PnL per Trade</td>
-              <td class="py-2.5 px-4 text-emerald-400">+${win_stats['avg_pnl']:,.2f}</td>
-              <td class="py-2.5 px-4 text-rose-400">${loss_stats['avg_pnl']:,.2f}</td>
-              <td class="py-2.5 px-4 text-emerald-400 font-bold">Payoff Ratio: {win_loss_payoff:.2f}:1</td>
+            <tr>
+              <td style="font-family: inherit; font-weight: 600;">Average PnL per Trade</td>
+              <td class="text-emerald">+${win_stats['avg_pnl']:,.2f}</td>
+              <td class="text-rose">${loss_stats['avg_pnl']:,.2f}</td>
+              <td class="text-emerald font-bold">Payoff Ratio: {win_loss_payoff:.2f}:1</td>
             </tr>
-            <tr class="hover:bg-slate-800/30">
-              <td class="py-2.5 px-4 font-sans font-medium text-slate-300">Median PnL per Trade</td>
-              <td class="py-2.5 px-4 text-emerald-400">+${win_stats['median_pnl']:,.2f}</td>
-              <td class="py-2.5 px-4 text-rose-400">${loss_stats['median_pnl']:,.2f}</td>
-              <td class="py-2.5 px-4 text-slate-400">${win_stats['median_pnl'] - abs(loss_stats['median_pnl']):+,.2f}</td>
+            <tr>
+              <td style="font-family: inherit; font-weight: 600;">Median PnL per Trade</td>
+              <td class="text-emerald">+${win_stats['median_pnl']:,.2f}</td>
+              <td class="text-rose">${loss_stats['median_pnl']:,.2f}</td>
+              <td class="text-muted">${win_stats['median_pnl'] - abs(loss_stats['median_pnl']):+,.2f}</td>
             </tr>
-            <tr class="hover:bg-slate-800/30">
-              <td class="py-2.5 px-4 font-sans font-medium text-slate-300">Average Gross Points</td>
-              <td class="py-2.5 px-4 text-emerald-400">+{win_stats['avg_pts']:.2f} pts</td>
-              <td class="py-2.5 px-4 text-rose-400">{loss_stats['avg_pts']:.2f} pts</td>
-              <td class="py-2.5 px-4 text-slate-400">{win_stats['avg_pts'] / max(0.01, abs(loss_stats['avg_pts'])):.2f}x points ratio</td>
+            <tr>
+              <td style="font-family: inherit; font-weight: 600;">Average Gross Points</td>
+              <td class="text-emerald">+{win_stats['avg_pts']:.2f} pts</td>
+              <td class="text-rose">{loss_stats['avg_pts']:.2f} pts</td>
+              <td class="text-muted">{win_stats['avg_pts'] / max(0.01, abs(loss_stats['avg_pts'])):.2f}x points ratio</td>
             </tr>
-            <tr class="hover:bg-slate-800/30">
-              <td class="py-2.5 px-4 font-sans font-medium text-slate-300">Largest Outlier Trade</td>
-              <td class="py-2.5 px-4 text-emerald-400">+${win_stats['max_pnl']:,.2f}</td>
-              <td class="py-2.5 px-4 text-rose-400">${loss_stats['max_pnl']:,.2f}</td>
-              <td class="py-2.5 px-4 text-slate-400">-</td>
+            <tr>
+              <td style="font-family: inherit; font-weight: 600;">Largest Outlier Trade</td>
+              <td class="text-emerald">+${win_stats['max_pnl']:,.2f}</td>
+              <td class="text-rose">${loss_stats['max_pnl']:,.2f}</td>
+              <td class="text-muted">-</td>
             </tr>
-            <tr class="hover:bg-slate-800/30">
-              <td class="py-2.5 px-4 font-sans font-medium text-slate-300">Average Duration (Hold Time)</td>
-              <td class="py-2.5 px-4">{win_stats['avg_hold']:.1f} mins (Median: {win_stats['median_hold']:.0f}m)</td>
-              <td class="py-2.5 px-4">{loss_stats['avg_hold']:.1f} mins (Median: {loss_stats['median_hold']:.0f}m)</td>
-              <td class="py-2.5 px-4 text-cyan-400">{'Winners hold longer' if win_stats['avg_hold'] > loss_stats['avg_hold'] else 'Losers hold longer'}</td>
+            <tr>
+              <td style="font-family: inherit; font-weight: 600;">Average Duration (Hold Time)</td>
+              <td>{win_stats['avg_hold']:.1f} mins (Median: {win_stats['median_hold']:.0f}m)</td>
+              <td>{loss_stats['avg_hold']:.1f} mins (Median: {loss_stats['median_hold']:.0f}m)</td>
+              <td class="text-cyan">{'Winners hold longer' if win_stats['avg_hold'] > loss_stats['avg_hold'] else 'Losers hold longer'}</td>
             </tr>
-            <tr class="hover:bg-slate-800/30">
-              <td class="py-2.5 px-4 font-sans font-medium text-slate-300">Average Contract Sizing</td>
-              <td class="py-2.5 px-4">{win_stats['avg_contracts']:.2f} contracts</td>
-              <td class="py-2.5 px-4">{loss_stats['avg_contracts']:.2f} contracts</td>
-              <td class="py-2.5 px-4 text-slate-400">{win_stats['avg_contracts'] - loss_stats['avg_contracts']:+.2f} contracts</td>
+            <tr>
+              <td style="font-family: inherit; font-weight: 600;">Average Contract Sizing</td>
+              <td>{win_stats['avg_contracts']:.2f} contracts</td>
+              <td>{loss_stats['avg_contracts']:.2f} contracts</td>
+              <td class="text-muted">{win_stats['avg_contracts'] - loss_stats['avg_contracts']:+.2f} contracts</td>
             </tr>
-            <tr class="hover:bg-slate-800/30">
-              <td class="py-2.5 px-4 font-sans font-medium text-slate-300">Average Initial Stop Distance</td>
-              <td class="py-2.5 px-4">{win_stats['avg_sl_dist']:.2f} pts</td>
-              <td class="py-2.5 px-4">{loss_stats['avg_sl_dist']:.2f} pts</td>
-              <td class="py-2.5 px-4 text-slate-400">{win_stats['avg_sl_dist'] - loss_stats['avg_sl_dist']:+.2f} pts</td>
+            <tr>
+              <td style="font-family: inherit; font-weight: 600;">Average Initial Stop Distance</td>
+              <td>{win_stats['avg_sl_dist']:.2f} pts</td>
+              <td>{loss_stats['avg_sl_dist']:.2f} pts</td>
+              <td class="text-muted">{win_stats['avg_sl_dist'] - loss_stats['avg_sl_dist']:+.2f} pts</td>
             </tr>
-            <tr class="hover:bg-slate-800/30">
-              <td class="py-2.5 px-4 font-sans font-medium text-slate-300">Average MAE (Max Adverse Excursion)</td>
-              <td class="py-2.5 px-4 text-amber-400 font-bold">{win_stats['avg_mae_r']:.3f} R ({win_stats['avg_mae_pts']:.2f} pts)</td>
-              <td class="py-2.5 px-4 text-rose-400 font-bold">{loss_stats['avg_mae_r']:.3f} R ({loss_stats['avg_mae_pts']:.2f} pts)</td>
-              <td class="py-2.5 px-4 text-slate-400">Winners suffer {win_stats['avg_mae_r']:.2f}R heat before TP</td>
+            <tr>
+              <td style="font-family: inherit; font-weight: 600;">Average MAE (Max Adverse Excursion)</td>
+              <td class="text-amber font-bold">{win_stats['avg_mae_r']:.3f} R ({win_stats['avg_mae_pts']:.2f} pts)</td>
+              <td class="text-rose font-bold">{loss_stats['avg_mae_r']:.3f} R ({loss_stats['avg_mae_pts']:.2f} pts)</td>
+              <td class="text-muted">Winners suffer {win_stats['avg_mae_r']:.2f}R heat before TP</td>
             </tr>
-            <tr class="hover:bg-slate-800/30">
-              <td class="py-2.5 px-4 font-sans font-medium text-slate-300">Average MFE (Max Favorable Excursion)</td>
-              <td class="py-2.5 px-4 text-emerald-400 font-bold">{win_stats['avg_mfe_r']:.3f} R ({win_stats['avg_mfe_pts']:.2f} pts)</td>
-              <td class="py-2.5 px-4 text-amber-400 font-bold">{loss_stats['avg_mfe_r']:.3f} R ({loss_stats['avg_mfe_pts']:.2f} pts)</td>
-              <td class="py-2.5 px-4 text-slate-400">Losers ran {loss_stats['avg_mfe_r']:.2f}R green before reversing</td>
+            <tr>
+              <td style="font-family: inherit; font-weight: 600;">Average MFE (Max Favorable Excursion)</td>
+              <td class="text-emerald font-bold">{win_stats['avg_mfe_r']:.3f} R ({win_stats['avg_mfe_pts']:.2f} pts)</td>
+              <td class="text-amber font-bold">{loss_stats['avg_mfe_r']:.3f} R ({loss_stats['avg_mfe_pts']:.2f} pts)</td>
+              <td class="text-muted">Losers ran {loss_stats['avg_mfe_r']:.2f}R green before reversing</td>
             </tr>
           </tbody>
         </table>
@@ -350,342 +562,427 @@ def generate_html_dashboard(
     </div>
 
     <!-- MAE vs MFE SCATTER PLOT -->
-    <div class="card p-6">
-      <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-2 mb-4">
+    <div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:0.5rem; margin-bottom: 0.75rem;">
         <div>
-          <h2 class="text-base font-semibold text-white">Intra-Trade MAE vs. MFE Excursion Scatter (in R-Multiples)</h2>
-          <p class="text-xs text-slate-400">
+          <h2>Intra-Trade MAE vs. MFE Excursion Scatter (in R-Multiples)</h2>
+          <p class="subtitle">
             Reveals trade journey: Adverse heat taken (MAE) vs Favorable peak reached (MFE). Green = Winning Trades, Red = Losing Trades.
           </p>
         </div>
-        <div class="flex items-center gap-4 text-xs font-mono">
-          <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span> Wins ({n_wins:,})</span>
-          <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-rose-500"></span> Losses ({n_losses:,})</span>
+        <div style="display:flex; gap:1rem; font-size:0.75rem;" class="font-mono">
+          <span style="display:flex; align-items:center; gap:0.35rem;"><span style="width:8px; height:8px; border-radius:50%; background:#10b981; display:inline-block;"></span> Wins ({n_wins:,})</span>
+          <span style="display:flex; align-items:center; gap:0.35rem;"><span style="width:8px; height:8px; border-radius:50%; background:#f43f5e; display:inline-block;"></span> Losses ({n_losses:,})</span>
         </div>
       </div>
-      <div id="maeMfeChart" style="height: 480px;"></div>
+      <div id="maeMfeChart" class="chart-box" style="height: 480px;">
+        <div class="chart-placeholder">Loading MAE vs MFE Interactive Scatter...</div>
+      </div>
     </div>
 
     <!-- TIME PLOTS SECTION -->
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    <div class="grid-2col">
       <!-- Hourly Performance (EST) -->
-      <div class="card p-5">
-        <div class="flex justify-between items-center mb-3">
-          <h2 class="text-base font-semibold text-white">Performance by Entry Hour (EST)</h2>
-          <span class="text-xs text-slate-400">Session Profile</span>
+      <div class="card">
+        <h2>Performance by Entry Hour (EST)</h2>
+        <p class="subtitle">Intraday session profile and edge distribution across 24 market hours.</p>
+        <div id="hourlyChart" class="chart-box" style="height: 350px;">
+          <div class="chart-placeholder">Loading Hourly Profile Chart...</div>
         </div>
-        <div id="hourlyChart" style="height: 350px;"></div>
+        <div class="table-container" style="max-height: 200px; overflow-y: auto;">
+          <table>
+            <thead><tr><th>Hour (EST)</th><th>Trades</th><th>Net PnL</th><th>Win Rate</th></tr></thead>
+            <tbody class="font-mono">{hourly_rows}</tbody>
+          </table>
+        </div>
       </div>
 
       <!-- Day of Week Performance -->
-      <div class="card p-5">
-        <div class="flex justify-between items-center mb-3">
-          <h2 class="text-base font-semibold text-white">Performance by Day of Week</h2>
-          <span class="text-xs text-slate-400">Mon - Fri Regularity</span>
+      <div class="card">
+        <h2>Performance by Day of Week</h2>
+        <p class="subtitle">Weekly cyclicality and edge stability across trading sessions.</p>
+        <div id="dowChart" class="chart-box" style="height: 350px;">
+          <div class="chart-placeholder">Loading Day of Week Chart...</div>
         </div>
-        <div id="dowChart" style="height: 350px;"></div>
+        <div class="table-container">
+          <table>
+            <thead><tr><th>Day of Week</th><th>Trades</th><th>Net PnL</th><th>Win Rate</th></tr></thead>
+            <tbody class="font-mono">{dow_rows}</tbody>
+          </table>
+        </div>
       </div>
     </div>
 
     <!-- CUMULATIVE WINS VS LOSSES TIMELINE & DURATION BREAKDOWN -->
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    <div class="grid-2col">
       <!-- Cumulative PnL Timeline -->
-      <div class="card p-5">
-        <div class="flex justify-between items-center mb-3">
-          <h2 class="text-base font-semibold text-white">Cumulative Timeline: Winning vs. Losing Trades PnL</h2>
-          <span class="text-xs text-slate-400">Compounding Spread</span>
+      <div class="card">
+        <h2>Cumulative Timeline: Winning vs. Losing Trades PnL</h2>
+        <p class="subtitle">Visualizing the spread between gross winning power vs gross losing drag over time.</p>
+        <div id="timelineChart" class="chart-box" style="height: 350px;">
+          <div class="chart-placeholder">Loading Cumulative Timeline Chart...</div>
         </div>
-        <div id="timelineChart" style="height: 350px;"></div>
       </div>
 
       <!-- Trade Duration Buckets -->
-      <div class="card p-5">
-        <div class="flex justify-between items-center mb-3">
-          <h2 class="text-base font-semibold text-white">Trade Duration Breakdown (Hold Time)</h2>
-          <span class="text-xs text-slate-400">Win Rate vs PnL</span>
+      <div class="card">
+        <h2>Trade Duration Breakdown (Hold Time)</h2>
+        <p class="subtitle">Trade frequency, cumulative PnL, and win rate across trade hold buckets.</p>
+        <div id="durationChart" class="chart-box" style="height: 350px;">
+          <div class="chart-placeholder">Loading Duration Breakdown Chart...</div>
         </div>
-        <div id="durationChart" style="height: 350px;"></div>
+        <div class="table-container">
+          <table>
+            <thead><tr><th>Hold Time</th><th>Trade Count</th><th>Net PnL</th><th>Win Rate</th></tr></thead>
+            <tbody class="font-mono">{dur_rows}</tbody>
+          </table>
+        </div>
       </div>
     </div>
 
     <!-- CORE EQUITY & DRAWDOWN CHARTS -->
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      <div class="card p-5">
-        <div class="flex justify-between items-center mb-4">
-          <h2 class="text-base font-semibold text-white">Cumulative Mark-to-Market Equity Curve</h2>
-          <span class="text-xs text-slate-400">Baseline: $50,000 Initial Capital</span>
+    <div class="grid-2col">
+      <div class="card">
+        <h2>Cumulative Mark-to-Market Equity Curve</h2>
+        <p class="subtitle">Baseline: $50,000 Initial Capital across full backtest horizon.</p>
+        <div id="equityChart" class="chart-box" style="height: 350px;">
+          <div class="chart-placeholder">Loading Equity Curve...</div>
         </div>
-        <div id="equityChart" style="height: 350px;"></div>
       </div>
-      <div class="card p-5">
-        <h2 class="text-base font-semibold text-white mb-4">Underwater Equity Drawdown ($)</h2>
-        <div id="drawdownChart" style="height: 350px;"></div>
+      <div class="card">
+        <h2>Underwater Equity Drawdown ($)</h2>
+        <p class="subtitle">Peak-to-trough mark-to-market drawdown trajectory.</p>
+        <div id="drawdownChart" class="chart-box" style="height: 350px;">
+          <div class="chart-placeholder">Loading Drawdown Curve...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- EXIT REASON BREAKDOWN -->
+    <div class="card">
+      <h2>Exit Reason Distribution & Execution Mechanics</h2>
+      <p class="subtitle">Categorization of trade exits across Stop Loss, Take Profit, and EOD Session Flattens.</p>
+      <div class="grid-2col" style="margin-top: 0.75rem;">
+        <div id="exitReasonChart" class="chart-box" style="height: 320px;">
+          <div class="chart-placeholder">Loading Exit Reason Breakdown Chart...</div>
+        </div>
+        <div class="table-container" style="display:flex; align-items:center;">
+          <table>
+            <thead><tr><th>Exit Reason</th><th>Trade Count</th><th>Share (%)</th></tr></thead>
+            <tbody class="font-mono">{exit_rows}</tbody>
+          </table>
+        </div>
       </div>
     </div>
 
     <!-- Trade Ledger Preview -->
-    <div class="card p-5">
-      <div class="flex justify-between items-center mb-4">
+    <div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
         <div>
-          <h2 class="text-base font-semibold text-white">Recent Trade Ledger Preview (with MAE / MFE)</h2>
-          <p class="text-xs text-slate-400">Showing first 50 trades. Full trade ledger exported to <code class="text-cyan-400">trades.csv</code></p>
+          <h2>Trade Ledger Preview (with MAE / MFE)</h2>
+          <p class="subtitle">Showing first 50 trades. Full trade ledger exported to <code class="text-cyan">trades.csv</code></p>
         </div>
-        <a href="trades.csv" download class="px-3 py-1.5 text-xs font-semibold bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg transition">
-          Download Full trades.csv
+        <a href="trades.csv" download class="btn btn-cyan">
+          Download Complete trades.csv ({total_trades:,} trades)
         </a>
       </div>
-      <div class="overflow-x-auto max-h-96">
-        <table class="w-full text-xs text-left text-slate-300">
-          <thead class="text-slate-400 uppercase bg-slate-950 sticky top-0 border-b border-slate-800">
+      <div class="table-container table-ledger">
+        <table>
+          <thead>
             <tr>
-              <th class="p-2">#</th>
-              <th class="p-2">Direction</th>
-              <th class="p-2">Entry Time (EST)</th>
-              <th class="p-2">Hold (m)</th>
-              <th class="p-2">Qty</th>
-              <th class="p-2">Entry</th>
-              <th class="p-2">Exit</th>
-              <th class="p-2">MAE (R)</th>
-              <th class="p-2">MFE (R)</th>
-              <th class="p-2">Gross Pts</th>
-              <th class="p-2">Net PnL ($)</th>
-              <th class="p-2">Exit Reason</th>
+              <th>#</th>
+              <th>Direction</th>
+              <th>Entry Time (EST)</th>
+              <th>Hold</th>
+              <th>Qty</th>
+              <th>Entry Price</th>
+              <th>Exit Price</th>
+              <th>MAE (R)</th>
+              <th>MFE (R)</th>
+              <th>Gross Pts</th>
+              <th>Net PnL ($)</th>
+              <th>Exit Reason</th>
             </tr>
           </thead>
-          <tbody class="divide-y divide-slate-800/60 font-mono">
-            {''.join([f'''<tr class="hover:bg-slate-800/40">
-              <td class="p-2 text-slate-500">{t.get("trade_id", "")}</td>
-              <td class="p-2 font-bold {'text-emerald-400' if t.get('direction') == 'LONG' else 'text-rose-400'}">{t.get("direction", "")}</td>
-              <td class="p-2 text-slate-300">{str(t.get("entry_time", ""))[:19]}</td>
-              <td class="p-2">{t.get("hold_time_minutes", "")}</td>
-              <td class="p-2">{t.get("contracts", "")}</td>
-              <td class="p-2">{t.get("entry_price", 0):.4f}</td>
-              <td class="p-2">{t.get("exit_price", 0):.4f}</td>
-              <td class="p-2 text-amber-400">{t.get("mae_r", 0):.2f}R</td>
-              <td class="p-2 text-cyan-400">{t.get("mfe_r", 0):.2f}R</td>
-              <td class="p-2 {'text-emerald-400' if t.get('gross_pts', 0) > 0 else 'text-rose-400'}">{t.get("gross_pts", 0):+.2f}</td>
-              <td class="p-2 font-bold {'text-emerald-400' if t.get('net_pnl_usd', 0) > 0 else 'text-rose-400'}">${t.get("net_pnl_usd", 0):+,.2f}</td>
-              <td class="p-2 text-slate-400">{t.get("exit_reason", "")}</td>
-            </tr>''' for t in sample_trades])}
-          </tbody>
+          <tbody class="font-mono">{trade_preview_rows}</tbody>
         </table>
       </div>
     </div>
 
   </div>
 
+  <!-- Asynchronous Multi-CDN Plotly Loader & Safe Execution Engine -->
   <script>
-    const eqDates = {json.dumps(eq_dates)};
-    const eqVals = {json.dumps(eq_vals)};
+    (function() {{
+      const cdnSources = [
+        "https://cdn.plot.ly/plotly-2.35.2.min.js",
+        "https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.35.2/plotly.min.js",
+        "https://unpkg.com/plotly.js-dist-min@2.35.2/plotly.min.js"
+      ];
+      let sourceIdx = 0;
 
-    // 1. MAE vs MFE Scatter Plot
-    Plotly.newPlot('maeMfeChart', [
-      {{
-        x: {json.dumps(loss_mae_r)},
-        y: {json.dumps(loss_mfe_r)},
-        mode: 'markers',
-        name: 'Losing Trades',
-        text: {json.dumps(loss_text)},
-        hoverinfo: 'text',
-        marker: {{ color: '#f43f5e', size: 6, opacity: 0.65 }}
-      }},
-      {{
-        x: {json.dumps(win_mae_r)},
-        y: {json.dumps(win_mfe_r)},
-        mode: 'markers',
-        name: 'Winning Trades',
-        text: {json.dumps(win_text)},
-        hoverinfo: 'text',
-        marker: {{ color: '#10b981', size: 7, opacity: 0.8 }}
-      }}
-    ], {{
-      template: 'plotly_dark',
-      paper_bgcolor: 'transparent',
-      plot_bgcolor: 'transparent',
-      margin: {{ l: 60, r: 30, t: 30, b: 50 }},
-      xaxis: {{ title: 'Maximum Adverse Excursion (MAE in R-Multiples)', showgrid: true, gridcolor: '#1e293b' }},
-      yaxis: {{ title: 'Maximum Favorable Excursion (MFE in R-Multiples)', showgrid: true, gridcolor: '#1e293b' }},
-      shapes: [
-        {{ type: 'line', x0: 1.0, x1: 1.0, y0: 0, y1: 3.5, line: {{ color: '#ef4444', dash: 'dash', width: 1.5 }} }},
-        {{ type: 'line', x0: 0, x1: 2.0, y0: 2.0, y1: 2.0, line: {{ color: '#10b981', dash: 'dash', width: 1.5 }} }}
-      ],
-      annotations: [
-        {{ x: 1.05, y: 0.2, xref: 'x', yref: 'y', text: '1.0R Initial SL', showarrow: false, font: {{ color: '#ef4444', size: 10 }} }},
-        {{ x: 0.1, y: 2.08, xref: 'x', yref: 'y', text: '2.0R Target TP', showarrow: false, font: {{ color: '#10b981', size: 10 }} }}
-      ]
-    }}, {{ responsive: true }});
-
-    // 2. Hourly Performance Chart (EST)
-    Plotly.newPlot('hourlyChart', [
-      {{
-        x: {json.dumps(hours_labels)},
-        y: {json.dumps(hourly_pnl)},
-        type: 'bar',
-        name: 'Net PnL ($)',
-        marker: {{
-          color: {json.dumps(hourly_pnl)}.map(v => v >= 0 ? '#10b981' : '#f43f5e')
+      function loadScript(idx) {{
+        if (idx >= cdnSources.length) {{
+          console.warn("All Plotly CDNs failed to load. Displaying offline static tables.");
+          showOfflineFallbacks();
+          return;
         }}
-      }},
-      {{
-        x: {json.dumps(hours_labels)},
-        y: {json.dumps(hourly_wr)},
-        type: 'scatter',
-        mode: 'lines+markers',
-        name: 'Win Rate (%)',
-        yaxis: 'y2',
-        line: {{ color: '#38bdf8', width: 2 }}
+        const script = document.createElement("script");
+        script.src = cdnSources[idx];
+        script.async = true;
+        script.onload = () => {{
+          if (window.Plotly) renderCharts();
+          else loadScript(idx + 1);
+        }};
+        script.onerror = () => loadScript(idx + 1);
+        document.head.appendChild(script);
       }}
-    ], {{
-      template: 'plotly_dark',
-      paper_bgcolor: 'transparent',
-      plot_bgcolor: 'transparent',
-      margin: {{ l: 60, r: 50, t: 20, b: 40 }},
-      xaxis: {{ title: 'Entry Hour (EST)', showgrid: false }},
-      yaxis: {{ title: 'Net PnL ($)', showgrid: true, gridcolor: '#1e293b' }},
-      yaxis2: {{ title: 'Win Rate (%)', overlaying: 'y', side: 'right', range: [0, 60], showgrid: false }},
-      legend: {{ orientation: 'h', y: -0.2 }}
-    }}, {{ responsive: true }});
 
-    // 3. Day of Week Performance Chart
-    Plotly.newPlot('dowChart', [
-      {{
-        x: {json.dumps(dow_labels)},
-        y: {json.dumps(dow_pnl)},
-        type: 'bar',
-        name: 'Net PnL ($)',
-        marker: {{
-          color: {json.dumps(dow_pnl)}.map(v => v >= 0 ? '#10b981' : '#f43f5e')
+      function showOfflineFallbacks() {{
+        const chartIds = [
+          'maeMfeChart', 'hourlyChart', 'dowChart', 'timelineChart',
+          'durationChart', 'equityChart', 'drawdownChart', 'exitReasonChart'
+        ];
+        chartIds.forEach(id => {{
+          const el = document.getElementById(id);
+          if (el) {{
+            el.innerHTML = '<div class="chart-fallback-notice">' +
+              '<p class="font-bold text-amber">📊 Chart Visualization Engine Offline</p>' +
+              '<p style="margin-top:0.25rem;">Plotly CDN could not be loaded in this browser environment. ' +
+              'All quantitative metrics, distributions, and tearsheets are fully available in the tables above and below.</p>' +
+              '</div>';
+          }}
+        }});
+      }}
+
+      function safePlot(domId, data, layout, config) {{
+        const el = document.getElementById(domId);
+        if (!el || !window.Plotly) return;
+        try {{
+          Plotly.newPlot(domId, data, layout, config || {{ responsive: true }});
+        }} catch (err) {{
+          console.error("Plotly render error on " + domId, err);
+          el.innerHTML = '<div class="chart-fallback-notice text-rose font-bold">Chart error: ' + err.message + '</div>';
         }}
-      }},
-      {{
-        x: {json.dumps(dow_labels)},
-        y: {json.dumps(dow_wr)},
-        type: 'scatter',
-        mode: 'lines+markers',
-        name: 'Win Rate (%)',
-        yaxis: 'y2',
-        line: {{ color: '#fbbf24', width: 2 }}
       }}
-    ], {{
-      template: 'plotly_dark',
-      paper_bgcolor: 'transparent',
-      plot_bgcolor: 'transparent',
-      margin: {{ l: 60, r: 50, t: 20, b: 40 }},
-      xaxis: {{ showgrid: false }},
-      yaxis: {{ title: 'Net PnL ($)', showgrid: true, gridcolor: '#1e293b' }},
-      yaxis2: {{ title: 'Win Rate (%)', overlaying: 'y', side: 'right', range: [0, 50], showgrid: false }},
-      legend: {{ orientation: 'h', y: -0.2 }}
-    }}, {{ responsive: true }});
 
-    // 4. Cumulative Wins vs Losses Timeline
-    Plotly.newPlot('timelineChart', [
-      {{
-        x: {json.dumps(tl_dates)},
-        y: {json.dumps(tl_win_cum)},
-        type: 'scatter',
-        mode: 'lines',
-        name: 'Cumulative Wins PnL (+)',
-        line: {{ color: '#10b981', width: 2 }}
-      }},
-      {{
-        x: {json.dumps(tl_dates)},
-        y: {json.dumps(tl_loss_cum)},
-        type: 'scatter',
-        mode: 'lines',
-        name: 'Cumulative Losses PnL (-)',
-        line: {{ color: '#f43f5e', width: 2 }}
+      function renderCharts() {{
+        const eqDates = {json.dumps(eq_dates)};
+        const eqVals = {json.dumps(eq_vals)};
+
+        // 1. MAE vs MFE Scatter Plot
+        safePlot('maeMfeChart', [
+          {{
+            x: {json.dumps(loss_mae_r)},
+            y: {json.dumps(loss_mfe_r)},
+            mode: 'markers',
+            name: 'Losing Trades',
+            text: {json.dumps(loss_text)},
+            hoverinfo: 'text',
+            marker: {{ color: '#f43f5e', size: 6, opacity: 0.65 }}
+          }},
+          {{
+            x: {json.dumps(win_mae_r)},
+            y: {json.dumps(win_mfe_r)},
+            mode: 'markers',
+            name: 'Winning Trades',
+            text: {json.dumps(win_text)},
+            hoverinfo: 'text',
+            marker: {{ color: '#10b981', size: 7, opacity: 0.8 }}
+          }}
+        ], {{
+          template: 'plotly_dark',
+          paper_bgcolor: 'transparent',
+          plot_bgcolor: 'transparent',
+          margin: {{ l: 60, r: 30, t: 30, b: 50 }},
+          xaxis: {{ title: 'Maximum Adverse Excursion (MAE in R-Multiples)', showgrid: true, gridcolor: '#1e293b' }},
+          yaxis: {{ title: 'Maximum Favorable Excursion (MFE in R-Multiples)', showgrid: true, gridcolor: '#1e293b' }},
+          shapes: [
+            {{ type: 'line', x0: 1.0, x1: 1.0, y0: 0, y1: 3.5, line: {{ color: '#ef4444', dash: 'dash', width: 1.5 }} }},
+            {{ type: 'line', x0: 0, x1: 2.0, y0: 2.0, y1: 2.0, line: {{ color: '#10b981', dash: 'dash', width: 1.5 }} }}
+          ],
+          annotations: [
+            {{ x: 1.05, y: 0.2, xref: 'x', yref: 'y', text: '1.0R Initial SL', showarrow: false, font: {{ color: '#ef4444', size: 10 }} }},
+            {{ x: 0.1, y: 2.08, xref: 'x', yref: 'y', text: '2.0R Target TP', showarrow: false, font: {{ color: '#10b981', size: 10 }} }}
+          ]
+        }});
+
+        // 2. Hourly Performance Chart (EST)
+        safePlot('hourlyChart', [
+          {{
+            x: {json.dumps(hours_labels)},
+            y: {json.dumps(hourly_pnl)},
+            type: 'bar',
+            name: 'Net PnL ($)',
+            marker: {{
+              color: {json.dumps(hourly_pnl)}.map(v => v >= 0 ? '#10b981' : '#f43f5e')
+            }}
+          }},
+          {{
+            x: {json.dumps(hours_labels)},
+            y: {json.dumps(hourly_wr)},
+            type: 'scatter',
+            mode: 'lines+markers',
+            name: 'Win Rate (%)',
+            yaxis: 'y2',
+            line: {{ color: '#38bdf8', width: 2 }}
+          }}
+        ], {{
+          template: 'plotly_dark',
+          paper_bgcolor: 'transparent',
+          plot_bgcolor: 'transparent',
+          margin: {{ l: 60, r: 50, t: 20, b: 40 }},
+          xaxis: {{ title: 'Entry Hour (EST)', showgrid: false }},
+          yaxis: {{ title: 'Net PnL ($)', showgrid: true, gridcolor: '#1e293b' }},
+          yaxis2: {{ title: 'Win Rate (%)', overlaying: 'y', side: 'right', range: [0, 60], showgrid: false }},
+          legend: {{ orientation: 'h', y: -0.25 }}
+        }});
+
+        // 3. Day of Week Performance Chart
+        safePlot('dowChart', [
+          {{
+            x: {json.dumps(dow_labels)},
+            y: {json.dumps(dow_pnl)},
+            type: 'bar',
+            name: 'Net PnL ($)',
+            marker: {{
+              color: {json.dumps(dow_pnl)}.map(v => v >= 0 ? '#10b981' : '#f43f5e')
+            }}
+          }},
+          {{
+            x: {json.dumps(dow_labels)},
+            y: {json.dumps(dow_wr)},
+            type: 'scatter',
+            mode: 'lines+markers',
+            name: 'Win Rate (%)',
+            yaxis: 'y2',
+            line: {{ color: '#fbbf24', width: 2 }}
+          }}
+        ], {{
+          template: 'plotly_dark',
+          paper_bgcolor: 'transparent',
+          plot_bgcolor: 'transparent',
+          margin: {{ l: 60, r: 50, t: 20, b: 40 }},
+          xaxis: {{ showgrid: false }},
+          yaxis: {{ title: 'Net PnL ($)', showgrid: true, gridcolor: '#1e293b' }},
+          yaxis2: {{ title: 'Win Rate (%)', overlaying: 'y', side: 'right', range: [0, 50], showgrid: false }},
+          legend: {{ orientation: 'h', y: -0.25 }}
+        }});
+
+        // 4. Cumulative Wins vs Losses Timeline
+        safePlot('timelineChart', [
+          {{
+            x: {json.dumps(tl_dates)},
+            y: {json.dumps(tl_win_cum)},
+            type: 'scatter',
+            mode: 'lines',
+            name: 'Cumulative Wins PnL (+)',
+            line: {{ color: '#10b981', width: 2 }}
+          }},
+          {{
+            x: {json.dumps(tl_dates)},
+            y: {json.dumps(tl_loss_cum)},
+            type: 'scatter',
+            mode: 'lines',
+            name: 'Cumulative Losses PnL (-)',
+            line: {{ color: '#f43f5e', width: 2 }}
+          }}
+        ], {{
+          template: 'plotly_dark',
+          paper_bgcolor: 'transparent',
+          plot_bgcolor: 'transparent',
+          margin: {{ l: 60, r: 20, t: 20, b: 40 }},
+          xaxis: {{ showgrid: true, gridcolor: '#1e293b' }},
+          yaxis: {{ title: 'Cumulative PnL ($)', showgrid: true, gridcolor: '#1e293b', tickprefix: '$' }},
+          legend: {{ orientation: 'h', y: -0.25 }}
+        }});
+
+        // 5. Trade Duration Analysis
+        safePlot('durationChart', [
+          {{
+            x: {json.dumps(dur_labels)},
+            y: {json.dumps(dur_counts)},
+            type: 'bar',
+            name: 'Trade Count',
+            marker: {{ color: '#6366f1' }}
+          }},
+          {{
+            x: {json.dumps(dur_labels)},
+            y: {json.dumps(dur_wr)},
+            type: 'scatter',
+            mode: 'lines+markers',
+            name: 'Win Rate (%)',
+            yaxis: 'y2',
+            line: {{ color: '#38bdf8', width: 2 }}
+          }}
+        ], {{
+          template: 'plotly_dark',
+          paper_bgcolor: 'transparent',
+          plot_bgcolor: 'transparent',
+          margin: {{ l: 60, r: 50, t: 20, b: 40 }},
+          xaxis: {{ title: 'Hold Time Duration', showgrid: false }},
+          yaxis: {{ title: 'Trades Count', showgrid: true, gridcolor: '#1e293b' }},
+          yaxis2: {{ title: 'Win Rate (%)', overlaying: 'y', side: 'right', range: [0, 50], showgrid: false }},
+          legend: {{ orientation: 'h', y: -0.25 }}
+        }});
+
+        // 6. Underwater Drawdown Plot
+        safePlot('drawdownChart', [{{
+          x: eqDates,
+          y: {json.dumps(dd_vals)},
+          type: 'scatter',
+          mode: 'lines',
+          name: 'Underwater DD ($)',
+          line: {{ color: '#f43f5e', width: 1.5 }},
+          fill: 'tozeroy',
+          fillcolor: 'rgba(244, 63, 94, 0.15)'
+        }}], {{
+          template: 'plotly_dark',
+          paper_bgcolor: 'transparent',
+          plot_bgcolor: 'transparent',
+          margin: {{ l: 60, r: 20, t: 10, b: 40 }},
+          xaxis: {{ showgrid: true, gridcolor: '#1e293b' }},
+          yaxis: {{ showgrid: true, gridcolor: '#1e293b', tickprefix: '$' }}
+        }});
+
+        // 7. Equity Curve Plot
+        safePlot('equityChart', [{{
+          x: eqDates,
+          y: eqVals,
+          type: 'scatter',
+          mode: 'lines',
+          name: 'Equity (USD)',
+          line: {{ color: '#06b6d4', width: 2 }},
+          fill: 'tozeroy',
+          fillcolor: 'rgba(6, 182, 212, 0.05)'
+        }}], {{
+          template: 'plotly_dark',
+          paper_bgcolor: 'transparent',
+          plot_bgcolor: 'transparent',
+          margin: {{ l: 60, r: 20, t: 10, b: 40 }},
+          xaxis: {{ showgrid: true, gridcolor: '#1e293b' }},
+          yaxis: {{ showgrid: true, gridcolor: '#1e293b', tickprefix: '$' }}
+        }});
+
+        // 8. Exit Reason Pie Chart
+        safePlot('exitReasonChart', [{{
+          labels: {json.dumps(exit_labels)},
+          values: {json.dumps(exit_values)},
+          type: 'pie',
+          hole: 0.5,
+          marker: {{ colors: ['#10b981', '#ef4444', '#f59e0b', '#6366f1'] }}
+        }}], {{
+          template: 'plotly_dark',
+          paper_bgcolor: 'transparent',
+          plot_bgcolor: 'transparent',
+          margin: {{ l: 20, r: 20, t: 10, b: 20 }},
+          legend: {{ orientation: 'h', y: -0.1 }}
+        }});
       }}
-    ], {{
-      template: 'plotly_dark',
-      paper_bgcolor: 'transparent',
-      plot_bgcolor: 'transparent',
-      margin: {{ l: 60, r: 20, t: 20, b: 40 }},
-      xaxis: {{ showgrid: true, gridcolor: '#1e293b' }},
-      yaxis: {{ title: 'Cumulative PnL ($)', showgrid: true, gridcolor: '#1e293b', tickprefix: '$' }},
-      legend: {{ orientation: 'h', y: -0.2 }}
-    }}, {{ responsive: true }});
 
-    // 5. Trade Duration Analysis
-    Plotly.newPlot('durationChart', [
-      {{
-        x: {json.dumps(dur_labels)},
-        y: {json.dumps(dur_counts)},
-        type: 'bar',
-        name: 'Trade Count',
-        marker: {{ color: '#6366f1' }}
-      }},
-      {{
-        x: {json.dumps(dur_labels)},
-        y: {json.dumps(dur_wr)},
-        type: 'scatter',
-        mode: 'lines+markers',
-        name: 'Win Rate (%)',
-        yaxis: 'y2',
-        line: {{ color: '#38bdf8', width: 2 }}
-      }}
-    ], {{
-      template: 'plotly_dark',
-      paper_bgcolor: 'transparent',
-      plot_bgcolor: 'transparent',
-      margin: {{ l: 60, r: 50, t: 20, b: 40 }},
-      xaxis: {{ title: 'Hold Time Duration', showgrid: false }},
-      yaxis: {{ title: 'Trades Count', showgrid: true, gridcolor: '#1e293b' }},
-      yaxis2: {{ title: 'Win Rate (%)', overlaying: 'y', side: 'right', range: [0, 50], showgrid: false }},
-      legend: {{ orientation: 'h', y: -0.2 }}
-    }}, {{ responsive: true }});
-
-    // 6. Underwater Drawdown Plot
-    Plotly.newPlot('drawdownChart', [{{
-      x: eqDates,
-      y: {json.dumps(dd_vals)},
-      type: 'scatter',
-      mode: 'lines',
-      name: 'Underwater DD ($)',
-      line: {{ color: '#f43f5e', width: 1.5 }},
-      fill: 'tozeroy',
-      fillcolor: 'rgba(244, 63, 94, 0.15)'
-    }}], {{
-      template: 'plotly_dark',
-      paper_bgcolor: 'transparent',
-      plot_bgcolor: 'transparent',
-      margin: {{ l: 60, r: 20, t: 10, b: 40 }},
-      xaxis: {{ showgrid: true, gridcolor: '#1e293b' }},
-      yaxis: {{ showgrid: true, gridcolor: '#1e293b', tickprefix: '$' }}
-    }}, {{ responsive: true }});
-
-    // 7. Equity Curve Plot
-    Plotly.newPlot('equityChart', [{{
-      x: eqDates,
-      y: eqVals,
-      type: 'scatter',
-      mode: 'lines',
-      name: 'Equity (USD)',
-      line: {{ color: '#06b6d4', width: 2 }},
-      fill: 'tozeroy',
-      fillcolor: 'rgba(6, 182, 212, 0.05)'
-    }}], {{
-      template: 'plotly_dark',
-      paper_bgcolor: 'transparent',
-      plot_bgcolor: 'transparent',
-      margin: {{ l: 60, r: 20, t: 10, b: 40 }},
-      xaxis: {{ showgrid: true, gridcolor: '#1e293b' }},
-      yaxis: {{ showgrid: true, gridcolor: '#1e293b', tickprefix: '$' }}
-    }}, {{ responsive: true }});
-
-    // 7. Exit Reason Pie
-    Plotly.newPlot('exitReasonChart', [{{
-      labels: {json.dumps(exit_labels)},
-      values: {json.dumps(exit_values)},
-      type: 'pie',
-      hole: 0.5,
-      marker: {{ colors: ['#10b981', '#ef4444', '#f59e0b', '#6366f1'] }}
-    }}], {{
-      template: 'plotly_dark',
-      paper_bgcolor: 'transparent',
-      plot_bgcolor: 'transparent',
-      margin: {{ l: 20, r: 20, t: 10, b: 20 }},
-      legend: {{ orientation: 'h', y: -0.1 }}
-    }}, {{ responsive: true }});
+      // Start asynchronous loader
+      loadScript(0);
+    }})();
   </script>
 </body>
 </html>

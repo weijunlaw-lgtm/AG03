@@ -21,6 +21,7 @@ class StrategyConfig:
     ema_period: int = 20
     rr_ratio: float = 2.0
     entry_cutoff_est: str = "15:50"  # e.g., '15:30', '15:50', '15:55'
+    allowed_windows_est: Optional[List[tuple[str, str]]] = None  # Specific windows e.g. [('02:00', '02:59'), ('22:00', '22:59')]
 
     # Fixed / Configurable institutional constants
     flatten_time_est: str = "16:05"  # Daily cutoff flatten before 16:10 EST

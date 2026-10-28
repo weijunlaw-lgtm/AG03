@@ -14,22 +14,22 @@
 
 | Metric | Value |
 | :--- | :--- |
-| **Total Trades** | 19,322 |
+| **Total Trades** | 956 |
 | **Active Trading Days** | 2,118 |
-| **Trades Per Day** | 9.12 |
-| **Overall Win Rate** | 32.62% |
-| **Profit Factor** | 0.8911 |
-| **Total Net Profit** | $-445,468.61 |
-| **Gross Profit** | $3,644,389.35 |
-| **Gross Loss** | $-4,089,857.96 |
-| **Total Commissions Paid** | $182,032.00 |
-| **Annualized Sharpe Ratio** | 0.0732 |
-| **Sortino Ratio** | 0.0586 |
-| **Calmar Ratio** | -0.1432 |
-| **Max Intraday Drawdown** | $459,113.84 |
-| **Max End-of-Day (EOD) Drawdown** | $457,415.63 |
-| **Worst Single Day PnL** | $-5,617.54 |
-| **Best Single Day PnL** | $5,989.13 |
+| **Trades Per Day** | 0.45 |
+| **Overall Win Rate** | 36.51% |
+| **Profit Factor** | 1.0699 |
+| **Total Net Profit** | $13,419.10 |
+| **Gross Profit** | $205,477.58 |
+| **Gross Loss** | $-192,058.48 |
+| **Total Commissions Paid** | $10,208.92 |
+| **Annualized Sharpe Ratio** | 0.3762 |
+| **Sortino Ratio** | 0.2657 |
+| **Calmar Ratio** | 0.1423 |
+| **Max Intraday Drawdown** | $14,291.34 |
+| **Max End-of-Day (EOD) Drawdown** | $13,865.99 |
+| **Worst Single Day PnL** | $-1,567.52 |
+| **Best Single Day PnL** | $1,914.62 |
 
 ---
 
@@ -37,15 +37,15 @@
 
 | Parameter | Value |
 | :--- | :--- |
-| **Long Trades Count & Win Rate** | 9,678 (32.69%) |
-| **Short Trades Count & Win Rate** | 9,644 (32.54%) |
-| **Average Hold Time** | 31.2 mins (Median: 15.0 mins) |
-| **Average Contract Sizing** | 7.60 contracts (Long: 7.73, Short: 7.46) |
-| **Peak Concurrent Contracts** | 42 / 50 contracts |
-| **Peak Concurrent Open Slots** | 6 |
+| **Long Trades Count & Win Rate** | 486 (36.21%) |
+| **Short Trades Count & Win Rate** | 470 (36.81%) |
+| **Average Hold Time** | 39.1 mins (Median: 20.0 mins) |
+| **Average Contract Sizing** | 8.61 contracts (Long: 8.80, Short: 8.42) |
+| **Peak Concurrent Contracts** | 29 / 50 contracts |
+| **Peak Concurrent Open Slots** | 3 |
 | **Trades Skipped by 50-Contract Cap** | 0 |
-| **Average Stop-Loss Distance** | 22.73 points |
-| **Trades Triggering 50pt Midpoint Rule** | 11.80% |
+| **Average Stop-Loss Distance** | 19.27 points |
+| **Trades Triggering 50pt Midpoint Rule** | 2.72% |
 
 ---
 

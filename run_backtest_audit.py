@@ -31,6 +31,7 @@ def main():
         risk_per_trade_usd=300.0,
         max_prop_contracts=50,
         min_sl_distance_pts=12.0,
+        allowed_windows_est=[("02:00", "02:59"), ("22:00", "22:59")],
         slippage_ticks_per_side=1.5,
         commission_rt_per_contract=1.24,
     )

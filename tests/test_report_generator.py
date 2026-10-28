@@ -170,6 +170,22 @@ class TestReportGenerator(unittest.TestCase):
         res_10 = run_numba_execution(open_arr, high_arr, low_arr, close_arr, sigs, force_flat, cfg_10)
         self.assertEqual(len(res_10.entry_bars), 0)
 
+    def test_allowed_windows_session_masks(self):
+        """Verify allowed_windows_est gates entries strictly to 02:00-02:59 and 22:00-22:59."""
+        from data_loader import compute_session_masks
+
+        idx = pd.date_range("2024-01-08 00:00:00", "2024-01-08 23:55:00", freq="5min", tz="America/New_York")
+        windows = [("02:00", "02:59"), ("22:00", "22:59")]
+        can_enter, _ = compute_session_masks(idx, allowed_windows_est=windows)
+
+        # 02:00 to 02:55 = 12 bars; 22:00 to 22:55 = 12 bars -> total 24 bars
+        self.assertEqual(can_enter.sum(), 24)
+
+        t_0230_idx = idx.get_loc(pd.Timestamp("2024-01-08 02:30:00", tz="America/New_York"))
+        t_1000_idx = idx.get_loc(pd.Timestamp("2024-01-08 10:00:00", tz="America/New_York"))
+        self.assertTrue(can_enter[t_0230_idx])
+        self.assertFalse(can_enter[t_1000_idx])
+
 
 if __name__ == "__main__":
     unittest.main()

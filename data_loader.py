@@ -3,7 +3,7 @@ Data loading, validation, timezone normalization, and synthetic generation for M
 """
 
 from datetime import time
-from typing import Optional
+from typing import List, Optional
 import numpy as np
 import pandas as pd
 
@@ -109,6 +109,7 @@ def compute_session_masks(
     entry_cutoff_est: str = "15:50",
     flatten_time_est: str = "16:05",
     session_start_est: Optional[str] = "18:00",
+    allowed_windows_est: Optional[List[tuple[str, str]]] = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Compute vectorized boolean masks for trade entries and session flattens.
@@ -130,6 +131,13 @@ def compute_session_masks(
     else:
         start_t = None
 
+    parsed_windows = []
+    if allowed_windows_est:
+        for w_start, w_end in allowed_windows_est:
+            sh, sm = map(int, w_start.split(":"))
+            eh, em = map(int, w_end.split(":"))
+            parsed_windows.append((time(sh, sm), time(eh, em)))
+
     n = len(index)
     can_enter = np.zeros(n, dtype=np.bool_)
     force_flatten = np.zeros(n, dtype=np.bool_)
@@ -142,13 +150,22 @@ def compute_session_masks(
         elif flatten_t <= t < time(17, 0):
             force_flatten[i] = True
 
-        # Can enter mask: before daily cutoff OR during evening Globex session
-        if start_t is not None:
-            if t < cutoff_t or t >= start_t:
+        # Can enter mask:
+        if parsed_windows:
+            in_window = False
+            for w_s, w_e in parsed_windows:
+                if w_s <= t <= w_e:
+                    in_window = True
+                    break
+            if in_window:
                 can_enter[i] = True
         else:
-            if t < cutoff_t:
-                can_enter[i] = True
+            if start_t is not None:
+                if t < cutoff_t or t >= start_t:
+                    can_enter[i] = True
+            else:
+                if t < cutoff_t:
+                    can_enter[i] = True
 
     return can_enter, force_flatten
 
@@ -168,6 +185,7 @@ def prepare_data(
         entry_cutoff_est=cfg.entry_cutoff_est,
         flatten_time_est=cfg.flatten_time_est,
         session_start_est=cfg.session_start_est,
+        allowed_windows_est=getattr(cfg, "allowed_windows_est", None),
     )
     df_clean["can_enter_mask"] = can_enter
     df_clean["force_flatten_mask"] = force_flatten

@@ -133,8 +133,7 @@ class TestReportGenerator(unittest.TestCase):
         """Verify min_sl_distance_pts filters out micro-stop trades."""
         import numpy as np
         from config import StrategyConfig
-        from signals import StrategySignals
-        from execution_kernel import run_numba_execution
+        from execution_kernel import StrategySignals, run_numba_execution
 
         open_arr = np.array([100.0, 100.0, 100.0])
         high_arr = np.array([105.0, 105.0, 105.0])
@@ -149,9 +148,6 @@ class TestReportGenerator(unittest.TestCase):
         force_flat = np.zeros(3, dtype=bool)
 
         sigs = StrategySignals(
-            bull_ebp=long_sig,
-            bear_ebp=short_sig,
-            ema=np.array([90.0] * 3),
             long_signal=long_sig,
             short_signal=short_sig,
             sl_long=sl_long,

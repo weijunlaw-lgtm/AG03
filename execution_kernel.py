@@ -17,7 +17,18 @@ import numpy as np
 from numba import njit
 
 from config import StrategyConfig
-from signals import StrategySignals
+
+
+@dataclass
+class StrategySignals:
+    """Vectorized trade signals and price anchors ready for execution kernel."""
+
+    long_signal: np.ndarray  # bool[:]
+    short_signal: np.ndarray  # bool[:]
+    sl_long: np.ndarray  # float64[:]
+    sl_short: np.ndarray  # float64[:]
+    is_midpoint_rule: Optional[np.ndarray] = None  # bool[:]
+    range_pts: Optional[np.ndarray] = None  # float64[:]
 
 
 @dataclass
@@ -382,6 +393,12 @@ def run_numba_execution(
     """Wrapper that executes the Numba kernel and packages outputs into ExecutionResult."""
     cfg = config or StrategyConfig()
 
+    midpoint_rule = (
+        signals.is_midpoint_rule
+        if signals.is_midpoint_rule is not None
+        else np.zeros(len(open_arr), dtype=np.bool_)
+    )
+
     (
         entry_bars,
         exit_bars,
@@ -415,7 +432,7 @@ def run_numba_execution(
         np.ascontiguousarray(signals.short_signal, dtype=np.bool_),
         np.ascontiguousarray(signals.sl_long, dtype=np.float64),
         np.ascontiguousarray(signals.sl_short, dtype=np.float64),
-        np.ascontiguousarray(signals.is_midpoint_rule, dtype=np.bool_),
+        np.ascontiguousarray(midpoint_rule, dtype=np.bool_),
         np.ascontiguousarray(force_flatten_arr, dtype=np.bool_),
         float(cfg.rr_ratio),
         float(cfg.risk_per_trade_usd),
